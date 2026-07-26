@@ -14,7 +14,12 @@ ghostty_config=${GHOSTX_GHOSTTY_CONFIG:-"$HOME/Library/Application Support/com.m
 
 ghostty_instance_id() {
   identity=""
-  for ghostty_pid in $(pgrep -x ghostty 2>/dev/null | sort -n); do
+  ghostty_pids=$(
+    ps -axo pid=,command= 2>/dev/null |
+      awk '$2 ~ /\/Ghostty\.app\/Contents\/MacOS\/ghostty$/ { print $1 }' |
+      sort -n
+  )
+  for ghostty_pid in $ghostty_pids; do
     started_at=$(ps -o lstart= -p "$ghostty_pid" 2>/dev/null || true)
     identity="${identity}${ghostty_pid}-${started_at}-"
   done

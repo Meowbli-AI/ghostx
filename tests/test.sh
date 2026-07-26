@@ -39,6 +39,7 @@ assert_eq "$identified_surface" "$surface_id"
 unbound_state_dir="$tmp_dir/unbound-state"
 printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"SessionStart\",\"cwd\":\"/tmp/project\"}" |
   TERM_PROGRAM=ghostty \
+  GHOSTX_SURFACE_ID= \
   GHOSTX_STATE_DIR="$unbound_state_dir" \
   "$repo_dir/libexec/bind-codex-session"
 [ ! -e "$unbound_state_dir/state.json" ] || fail "binding without a surface identity created state"
