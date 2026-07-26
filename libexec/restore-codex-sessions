@@ -1,0 +1,87 @@
+#!/bin/sh
+
+# Restore every Codex session mapped to a terminal surface in the current
+# Ghostty application process. This script is started by the zsh integration
+# and claims a one-shot marker so many restored shells remain safe.
+
+set -u
+umask 077
+
+runtime_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd) || exit 0
+applescript_dir=${GHOSTX_APPLESCRIPT_DIR:-"$runtime_dir/applescript"}
+state_dir=${GHOSTX_STATE_DIR:-"${XDG_STATE_HOME:-$HOME/.local/state}/ghostx"}
+state_file="$state_dir/state.json"
+osascript_bin=${GHOSTX_OSASCRIPT:-/usr/bin/osascript}
+
+[ -f "$state_file" ] || exit 0
+/usr/bin/plutil -convert json -o - "$state_file" >/dev/null 2>&1 || exit 0
+[ -r "$applescript_dir/restore-surface.applescript" ] || exit 0
+
+if [ -n "${GHOSTX_INSTANCE_ID:-}" ]; then
+  instance_id=$GHOSTX_INSTANCE_ID
+else
+  instance_id=$(pgrep -x ghostty 2>/dev/null | sort -n | tr '\n' '-')
+fi
+instance_id=$(printf '%s' "$instance_id" | tr -cd 'A-Za-z0-9_-')
+[ -n "$instance_id" ] || exit 0
+
+run_dir="$state_dir/run"
+mkdir -p "$run_dir" || exit 0
+done_file="$run_dir/restored-$instance_id"
+lock_dir="$run_dir/restoring-$instance_id"
+[ ! -e "$done_file" ] || exit 0
+mkdir "$lock_dir" 2>/dev/null || exit 0
+cleanup_lock() {
+  rmdir "$lock_dir" 2>/dev/null || true
+}
+trap cleanup_lock EXIT HUP INT TERM
+
+# Native restoration creates surfaces asynchronously. Wait for the terminal
+# count to remain stable before sending input. Tests can skip this delay.
+if [ -z "${GHOSTX_SKIP_WAIT:-}" ]; then
+  sleep 1
+  previous_count=""
+  stable_count=0
+  attempts=0
+  while [ "$attempts" -lt 20 ]; do
+    current_count=$(
+      "$osascript_bin" "$applescript_dir/count-terminals.applescript" 2>/dev/null
+    ) || current_count=""
+    if [ -n "$current_count" ] && [ "$current_count" = "$previous_count" ]; then
+      stable_count=$((stable_count + 1))
+      [ "$stable_count" -ge 3 ] && break
+    else
+      stable_count=0
+      previous_count=$current_count
+    fi
+    sleep 0.25
+    attempts=$((attempts + 1))
+  done
+fi
+
+surface_ids=$(/usr/bin/plutil -extract surfaces raw -o - "$state_file" 2>/dev/null) || exit 0
+restored=0
+
+for surface_id in $surface_ids; do
+  session_id=$(
+    /usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$state_file" 2>/dev/null
+  ) || continue
+  agent=$(
+    /usr/bin/plutil -extract "surfaces.$surface_id.agent" raw -o - "$state_file" 2>/dev/null
+  ) || continue
+
+  [ "$agent" = "codex" ] || continue
+  case "$session_id" in
+    ????????-????-????-????-????????????) ;;
+    *) continue ;;
+  esac
+
+  result=$(
+    "$osascript_bin" "$applescript_dir/restore-surface.applescript" \
+      "$surface_id" "codex resume $session_id" 2>/dev/null
+  ) || result=""
+  [ "$result" = "restored" ] && restored=$((restored + 1))
+done
+
+printf '%s\n' "$(date +%s):$restored" >"$done_file"
+exit 0

@@ -1,0 +1,115 @@
+#!/bin/sh
+
+# Codex SessionStart hook: bind the exact session UUID to the current Ghostty
+# surface UUID. Failures are deliberately non-fatal so terminal integration can
+# never prevent Codex from starting.
+
+set -u
+umask 077
+
+runtime_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd) || exit 0
+applescript_dir=${GHOSTX_APPLESCRIPT_DIR:-"$runtime_dir/applescript"}
+state_dir=${GHOSTX_STATE_DIR:-"${XDG_STATE_HOME:-$HOME/.local/state}/ghostx"}
+state_file="$state_dir/state.json"
+osascript_bin=${GHOSTX_OSASCRIPT:-/usr/bin/osascript}
+tty_path=${GHOSTX_TTY:-/dev/tty}
+
+payload=$(cat) || exit 0
+session_id=$(printf '%s' "$payload" | /usr/bin/plutil -extract session_id raw -o - - 2>/dev/null) || exit 0
+
+case "$session_id" in
+  ????????-????-????-????-????????????) ;;
+  *) exit 0 ;;
+esac
+
+case ${TERM_PROGRAM:-} in
+  ghostty|Ghostty) ;;
+  *)
+    [ -n "${GHOSTX_ALLOW_NON_GHOSTTY:-}" ] || exit 0
+    ;;
+esac
+
+[ -w "$tty_path" ] || exit 0
+[ -r "$applescript_dir/find-terminal-by-title.applescript" ] || exit 0
+
+marker="ghostx-bind:$session_id:$$:$(date +%s)"
+
+# Push the current terminal title, set a unique marker, and restore the title
+# on every exit path. Ghostty supports the xterm title stack operations.
+printf '\033[22;0t\033]2;%s\007' "$marker" >"$tty_path" 2>/dev/null || exit 0
+restore_title() {
+  printf '\033[23;0t' >"$tty_path" 2>/dev/null || true
+}
+trap restore_title EXIT HUP INT TERM
+
+surface_id=""
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+  surface_id=$(
+    "$osascript_bin" "$applescript_dir/find-terminal-by-title.applescript" "$marker" 2>/dev/null
+  ) || surface_id=""
+  [ -n "$surface_id" ] && break
+  sleep 0.05
+  attempt=$((attempt + 1))
+done
+
+case "$surface_id" in
+  ????????-????-????-????-????????????) ;;
+  *) exit 0 ;;
+esac
+
+mkdir -p "$state_dir" || exit 0
+lock_dir="$state_dir/.bind-lock"
+attempt=0
+while ! mkdir "$lock_dir" 2>/dev/null; do
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 40 ] || exit 0
+  sleep 0.05
+done
+cleanup_lock() {
+  rmdir "$lock_dir" 2>/dev/null || true
+}
+trap 'cleanup_lock; restore_title' EXIT HUP INT TERM
+
+tmp_file=$(mktemp "$state_dir/state.XXXXXX") || exit 0
+cleanup_tmp() {
+  rm -f "$tmp_file" 2>/dev/null || true
+}
+
+if [ -f "$state_file" ]; then
+  /usr/bin/plutil -convert json -o - "$state_file" >/dev/null 2>&1 || {
+    cleanup_tmp
+    exit 0
+  }
+  cp "$state_file" "$tmp_file" || {
+    cleanup_tmp
+    exit 0
+  }
+else
+  printf '%s\n' '{"version":1,"surfaces":{}}' >"$tmp_file" || exit 0
+fi
+
+record=$(printf '{"agent":"codex","session_id":"%s","updated_at":%s}' "$session_id" "$(date +%s)")
+if /usr/bin/plutil -type "surfaces.$surface_id" "$tmp_file" >/dev/null 2>&1; then
+  /usr/bin/plutil -replace "surfaces.$surface_id" -json "$record" "$tmp_file" >/dev/null 2>&1 || {
+    cleanup_tmp
+    exit 0
+  }
+else
+  /usr/bin/plutil -insert "surfaces.$surface_id" -json "$record" "$tmp_file" >/dev/null 2>&1 || {
+    cleanup_tmp
+    exit 0
+  }
+fi
+
+/usr/bin/plutil -convert json -r "$tmp_file" >/dev/null 2>&1 || {
+  cleanup_tmp
+  exit 0
+}
+mv "$tmp_file" "$state_file" || {
+  cleanup_tmp
+  exit 0
+}
+chmod 600 "$state_file" 2>/dev/null || true
+
+exit 0
