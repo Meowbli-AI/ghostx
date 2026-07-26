@@ -28,11 +28,13 @@ ghostty_instance_id() {
 
 mkdir -p "$runtime_dir/libexec" "$runtime_dir/applescript" "$runtime_dir/shell"
 cp "$repo_dir/libexec/bind-codex-session" "$runtime_dir/libexec/"
+cp "$repo_dir/libexec/backfill-codex-sessions" "$runtime_dir/libexec/"
 cp "$repo_dir/libexec/identify-ghostty-surface" "$runtime_dir/libexec/"
 cp "$repo_dir/libexec/restore-codex-sessions" "$runtime_dir/libexec/"
 cp "$repo_dir"/applescript/*.applescript "$runtime_dir/applescript/"
 cp "$repo_dir/shell/ghostx.zsh" "$runtime_dir/shell/"
 chmod 755 \
+  "$runtime_dir/libexec/backfill-codex-sessions" \
   "$runtime_dir/libexec/bind-codex-session" \
   "$runtime_dir/libexec/identify-ghostty-surface" \
   "$runtime_dir/libexec/restore-codex-sessions"
@@ -161,6 +163,13 @@ if [ -n "$instance_id" ]; then
   printf '%s\n' "$(date +%s):installed" >"$state_dir/run/restored-$instance_id"
 fi
 
+if [ -z "${GHOSTX_SKIP_BACKFILL:-}" ]; then
+  backfilled_sessions=$("$runtime_dir/libexec/backfill-codex-sessions" 2>/dev/null || printf '0')
+else
+  backfilled_sessions=0
+fi
+
 printf '%s\n' "Ghostx installed."
+printf '%s\n' "Backfilled $backfilled_sessions running Codex session(s)."
 printf '%s\n' "Next: continue an existing Codex session, start one, or resume one in Ghostty."
 printf '%s\n' "Open /hooks once and trust the Ghostx hooks if they are pending review."

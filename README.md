@@ -57,14 +57,18 @@ The installer is idempotent and preserves existing configuration. It:
 3. Appends one `SessionStart` group to `~/.codex/hooks.json` without replacing
    existing hooks.
 4. Adds one marked source block to `~/.zshrc`.
+5. Backfills already-running Codex TUI processes by matching each process's
+   open rollout filename and controlling TTY to its Ghostty surface.
 
 The surface identity is normally exported during interactive shell startup.
 After the first install, open `/hooks` once and trust the Ghostx hooks if they
 are pending review. New and resumed Codex sessions bind at `SessionStart`.
-Sessions that were already running bind on their next ordinary prompt; if they
-predate the shell integration, the hook resolves the current Ghostty surface
-directly from their controlling TTY. No `exec zsh`, new chat, or resume cycle is
-required.
+Sessions that were already running are backfilled during installation. The
+installer reads only the rollout filename already opened by each Codex process,
+not transcript contents, and matches its controlling TTY to the Ghostty
+surface. The prompt hook remains a progressive fallback; if a Codex process
+predates the shell integration, it resolves the current Ghostty surface directly
+from that TTY. No `exec zsh`, new chat, or resume cycle is required.
 
 On the next Ghostty relaunch, restored surfaces automatically receive their
 exact `codex resume <UUID>` command.

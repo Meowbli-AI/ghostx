@@ -58,6 +58,29 @@ printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptS
 fallback_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$fallback_state_dir/state.json")
 assert_eq "$fallback_session" "$session_id"
 
+# Installation can backfill a Codex process that has not loaded the new hook.
+# The rollout filename supplies session identity without reading its contents.
+backfill_bin_dir="$tmp_dir/backfill-bin"
+backfill_state_dir="$tmp_dir/backfill-state"
+mkdir -p "$backfill_bin_dir"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" 4242' >"$backfill_bin_dir/pgrep"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" ttys777' >"$backfill_bin_dir/ps"
+printf '%s\n' '#!/bin/sh' "printf 'n/tmp/rollout-2026-07-27T00-00-00-$session_id.jsonl\\n'" >"$backfill_bin_dir/lsof"
+printf '%s\n' '#!/bin/sh' '[ "$GHOSTX_TTY" = /dev/ttys777 ] || exit 1' "printf '%s\\n' '$surface_id'" >"$backfill_bin_dir/identify"
+chmod 755 "$backfill_bin_dir"/*
+backfilled=$(
+  GHOSTX_STATE_DIR="$backfill_state_dir" \
+  GHOSTX_PGREP="$backfill_bin_dir/pgrep" \
+  GHOSTX_PS="$backfill_bin_dir/ps" \
+  GHOSTX_LSOF="$backfill_bin_dir/lsof" \
+  GHOSTX_IDENTIFY_SURFACE="$backfill_bin_dir/identify" \
+  GHOSTX_BIND_SESSION="$repo_dir/libexec/bind-codex-session" \
+    "$repo_dir/libexec/backfill-codex-sessions"
+)
+assert_eq "$backfilled" "1"
+backfilled_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$backfill_state_dir/state.json")
+assert_eq "$backfilled_session" "$session_id"
+
 # Later prompts from that old process reuse its unique saved mapping and do
 # not need another AppleScript round trip.
 printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
@@ -137,7 +160,7 @@ cp "$fake_home/Library/Application Support/com.mitchellh.ghostty/config" "$tmp_d
 cp "$fake_home/.zshrc" "$tmp_dir/original-zshrc"
 original_hooks_mode=$(stat -f '%Lp' "$fake_home/.codex/hooks.json")
 
-HOME="$fake_home" "$repo_dir/install.sh" >/dev/null
+HOME="$fake_home" GHOSTX_SKIP_BACKFILL=1 "$repo_dir/install.sh" >/dev/null
 grep -Fq 'existing-hook' "$fake_home/.codex/hooks.json" || fail "installer removed an existing hook"
 hook_count=$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$fake_home/.codex/hooks.json")
 assert_eq "$hook_count" "2"
@@ -158,7 +181,7 @@ grep -Fq '# existing zsh config' "$fake_home/.zshrc" || fail "installer removed 
 # Reinstalling must not duplicate marked blocks or hooks.
 /usr/bin/plutil -replace hooks.SessionStart.1.hooks.0.timeout -integer 3 "$fake_home/.codex/hooks.json"
 /usr/bin/plutil -replace hooks.UserPromptSubmit.0.hooks.0.timeout -integer 3 "$fake_home/.codex/hooks.json"
-HOME="$fake_home" "$repo_dir/install.sh" >/dev/null
+HOME="$fake_home" GHOSTX_SKIP_BACKFILL=1 "$repo_dir/install.sh" >/dev/null
 assert_eq "$(grep -Fc '# >>> ghostx >>>' "$fake_home/.zshrc")" "1"
 assert_eq "$(grep -Fc '# >>> ghostx >>>' "$fake_home/Library/Application Support/com.mitchellh.ghostty/config")" "1"
 assert_eq "$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$fake_home/.codex/hooks.json")" "2"
