@@ -64,6 +64,11 @@ running before installation are not bound retroactively.
 On the next Ghostty relaunch, restored surfaces automatically receive their
 exact `codex resume <UUID>` command.
 
+A Mac reboot is not required for an end-to-end check. After at least one
+session has been bound, fully quit Ghostty and reopen it; this exercises the
+same application-state restoration path. Save active terminal work first,
+because quitting Ghostty terminates the processes running in its surfaces.
+
 ## How binding works
 
 The Codex hook receives `session_id` on stdin. The bind helper temporarily
@@ -127,4 +132,3 @@ Run the isolated tests on macOS:
 
 The tests use temporary homes and a mock AppleScript runner. They do not type
 into live terminals or modify real user configuration.
-

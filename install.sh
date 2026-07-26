@@ -12,6 +12,15 @@ state_dir=${GHOSTX_STATE_DIR:-"${XDG_STATE_HOME:-$HOME/.local/state}/ghostx"}
 zshrc=${ZDOTDIR:-$HOME}/.zshrc
 ghostty_config=${GHOSTX_GHOSTTY_CONFIG:-"$HOME/Library/Application Support/com.mitchellh.ghostty/config"}
 
+ghostty_instance_id() {
+  identity=""
+  for ghostty_pid in $(pgrep -x ghostty 2>/dev/null | sort -n); do
+    started_at=$(ps -o lstart= -p "$ghostty_pid" 2>/dev/null || true)
+    identity="${identity}${ghostty_pid}-${started_at}-"
+  done
+  printf '%s' "$identity" | tr -cd 'A-Za-z0-9_-'
+}
+
 mkdir -p "$runtime_dir/libexec" "$runtime_dir/applescript" "$runtime_dir/shell"
 cp "$repo_dir/libexec/bind-codex-session" "$runtime_dir/libexec/"
 cp "$repo_dir/libexec/restore-codex-sessions" "$runtime_dir/libexec/"
@@ -102,8 +111,7 @@ fi
 # newly opened shell replay commands into terminals that are currently in use.
 # Mark only the current process set as handled; a future Ghostty launch gets a
 # different process identity and performs the normal restoration.
-instance_id=$(pgrep -x ghostty 2>/dev/null | sort -n | tr '\n' '-' || true)
-instance_id=$(printf '%s' "$instance_id" | tr -cd 'A-Za-z0-9_-')
+instance_id=$(ghostty_instance_id)
 if [ -n "$instance_id" ]; then
   mkdir -p "$state_dir/run"
   printf '%s\n' "$(date +%s):installed" >"$state_dir/run/restored-$instance_id"

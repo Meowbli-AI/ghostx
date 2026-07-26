@@ -27,6 +27,20 @@ mock_log="$tmp_dir/mock.log"
 session_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 surface_id="11111111-2222-3333-4444-555555555555"
 
+# A Ghostty process launched before the first binding must still be marked as
+# handled. Creating state later in that same process must not trigger replay.
+empty_state_dir="$tmp_dir/empty-state"
+empty_state_log="$tmp_dir/empty-state.log"
+: >"$empty_state_log"
+GHOSTX_STATE_DIR="$empty_state_dir" \
+GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
+GHOSTX_OSASCRIPT="$repo_dir/tests/mock-osascript.sh" \
+GHOSTX_MOCK_LOG="$empty_state_log" \
+GHOSTX_INSTANCE_ID="empty-state-instance" \
+GHOSTX_SKIP_WAIT=1 \
+  "$repo_dir/libexec/restore-codex-sessions"
+[ -f "$empty_state_dir/run/restored-empty-state-instance" ] || fail "no-state startup was not guarded"
+
 printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"SessionStart\",\"cwd\":\"/tmp/project\"}" |
   TERM_PROGRAM=ghostty \
   GHOSTX_STATE_DIR="$state_dir" \
@@ -37,6 +51,16 @@ printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"SessionStar
 
 bound_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$state_dir/state.json")
 assert_eq "$bound_session" "$session_id"
+
+cp "$state_dir/state.json" "$empty_state_dir/state.json"
+GHOSTX_STATE_DIR="$empty_state_dir" \
+GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
+GHOSTX_OSASCRIPT="$repo_dir/tests/mock-osascript.sh" \
+GHOSTX_MOCK_LOG="$empty_state_log" \
+GHOSTX_INSTANCE_ID="empty-state-instance" \
+GHOSTX_SKIP_WAIT=1 \
+  "$repo_dir/libexec/restore-codex-sessions"
+assert_eq "$(wc -l <"$empty_state_log" | tr -d ' ')" "0"
 
 GHOSTX_STATE_DIR="$state_dir" \
 GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \

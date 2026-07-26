@@ -13,14 +13,19 @@ state_dir=${GHOSTX_STATE_DIR:-"${XDG_STATE_HOME:-$HOME/.local/state}/ghostx"}
 state_file="$state_dir/state.json"
 osascript_bin=${GHOSTX_OSASCRIPT:-/usr/bin/osascript}
 
-[ -f "$state_file" ] || exit 0
-/usr/bin/plutil -convert json -o - "$state_file" >/dev/null 2>&1 || exit 0
-[ -r "$applescript_dir/restore-surface.applescript" ] || exit 0
+ghostty_instance_id() {
+  identity=""
+  for ghostty_pid in $(pgrep -x ghostty 2>/dev/null | sort -n); do
+    started_at=$(ps -o lstart= -p "$ghostty_pid" 2>/dev/null || true)
+    identity="${identity}${ghostty_pid}-${started_at}-"
+  done
+  printf '%s' "$identity" | tr -cd 'A-Za-z0-9_-'
+}
 
 if [ -n "${GHOSTX_INSTANCE_ID:-}" ]; then
   instance_id=$GHOSTX_INSTANCE_ID
 else
-  instance_id=$(pgrep -x ghostty 2>/dev/null | sort -n | tr '\n' '-')
+  instance_id=$(ghostty_instance_id)
 fi
 instance_id=$(printf '%s' "$instance_id" | tr -cd 'A-Za-z0-9_-')
 [ -n "$instance_id" ] || exit 0
@@ -35,6 +40,21 @@ cleanup_lock() {
   rmdir "$lock_dir" 2>/dev/null || true
 }
 trap cleanup_lock EXIT HUP INT TERM
+
+mark_done() {
+  printf '%s\n' "$(date +%s):$1" >"$done_file"
+}
+
+# Claim the Ghostty process before looking for saved mappings. A fresh install
+# may launch Ghostty before any Codex session has been bound. That process must
+# still be marked as handled so a later ordinary tab does not look like an app
+# restoration after state.json appears.
+if [ ! -f "$state_file" ] ||
+  ! /usr/bin/plutil -convert json -o - "$state_file" >/dev/null 2>&1 ||
+  [ ! -r "$applescript_dir/restore-surface.applescript" ]; then
+  mark_done 0
+  exit 0
+fi
 
 # Native restoration creates surfaces asynchronously. Wait for the terminal
 # count to remain stable before sending input. Tests can skip this delay.
@@ -59,7 +79,10 @@ if [ -z "${GHOSTX_SKIP_WAIT:-}" ]; then
   done
 fi
 
-surface_ids=$(/usr/bin/plutil -extract surfaces raw -o - "$state_file" 2>/dev/null) || exit 0
+surface_ids=$(/usr/bin/plutil -extract surfaces raw -o - "$state_file" 2>/dev/null) || {
+  mark_done 0
+  exit 0
+}
 restored=0
 
 for surface_id in $surface_ids; do
@@ -83,5 +106,5 @@ for surface_id in $surface_ids; do
   [ "$result" = "restored" ] && restored=$((restored + 1))
 done
 
-printf '%s\n' "$(date +%s):$restored" >"$done_file"
+mark_done "$restored"
 exit 0
