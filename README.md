@@ -57,9 +57,11 @@ The installer is idempotent and preserves existing configuration. It:
    existing hooks.
 4. Adds one marked source block to `~/.zshrc`.
 
-After installation, start a new Codex session or resume an existing one, then
-open `/hooks` once and trust the Ghostx hook. Sessions that were already
-running before installation are not bound retroactively.
+The surface identity is exported during interactive shell startup. After the
+first install, open a new Ghostty tab or run `exec zsh`, then start a new Codex
+session or resume an existing one. Open `/hooks` once and trust the Ghostx hook
+if it is pending review. Sessions that were already running before installation
+are not bound retroactively.
 
 On the next Ghostty relaunch, restored surfaces automatically receive their
 exact `codex resume <UUID>` command.
@@ -71,10 +73,12 @@ because quitting Ghostty terminates the processes running in its surfaces.
 
 ## How binding works
 
-The Codex hook receives `session_id` on stdin. The bind helper temporarily
-sets a unique terminal title through `/dev/tty`, resolves that title to
-Ghostty's stable terminal UUID through AppleScript, and immediately restores
-the previous title. The mapping is stored at:
+At interactive shell startup, the zsh integration temporarily sets a unique
+terminal title through `/dev/tty`, resolves that title to Ghostty's stable
+terminal UUID through AppleScript, immediately restores the previous title,
+and exports the UUID as `GHOSTX_SURFACE_ID`. The Codex hook receives
+`session_id` on stdin and combines it with that exported surface identity. The
+mapping is stored at:
 
 ```text
 ${XDG_STATE_HOME:-~/.local/state}/ghostx/state.json

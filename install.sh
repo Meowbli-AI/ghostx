@@ -23,10 +23,14 @@ ghostty_instance_id() {
 
 mkdir -p "$runtime_dir/libexec" "$runtime_dir/applescript" "$runtime_dir/shell"
 cp "$repo_dir/libexec/bind-codex-session" "$runtime_dir/libexec/"
+cp "$repo_dir/libexec/identify-ghostty-surface" "$runtime_dir/libexec/"
 cp "$repo_dir/libexec/restore-codex-sessions" "$runtime_dir/libexec/"
 cp "$repo_dir"/applescript/*.applescript "$runtime_dir/applescript/"
 cp "$repo_dir/shell/ghostx.zsh" "$runtime_dir/shell/"
-chmod 755 "$runtime_dir/libexec/bind-codex-session" "$runtime_dir/libexec/restore-codex-sessions"
+chmod 755 \
+  "$runtime_dir/libexec/bind-codex-session" \
+  "$runtime_dir/libexec/identify-ghostty-surface" \
+  "$runtime_dir/libexec/restore-codex-sessions"
 chmod 644 "$runtime_dir"/applescript/*.applescript "$runtime_dir/shell/ghostx.zsh"
 
 mkdir -p "$(dirname -- "$ghostty_config")"
@@ -118,4 +122,5 @@ if [ -n "$instance_id" ]; then
 fi
 
 printf '%s\n' "Ghostx installed."
-printf '%s\n' "Next: start or resume Codex, open /hooks, and trust the Ghostx SessionStart hook."
+printf '%s\n' "Next: open a new Ghostty shell (or run exec zsh), then start or resume Codex."
+printf '%s\n' "Open /hooks once and trust the Ghostx SessionStart hook if it is pending review."

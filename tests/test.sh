@@ -27,6 +27,22 @@ mock_log="$tmp_dir/mock.log"
 session_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 surface_id="11111111-2222-3333-4444-555555555555"
 
+identified_surface=$(
+  TERM_PROGRAM=ghostty \
+  GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
+  GHOSTX_OSASCRIPT="$repo_dir/tests/mock-osascript.sh" \
+  GHOSTX_TTY="$tty_file" \
+    "$repo_dir/libexec/identify-ghostty-surface"
+)
+assert_eq "$identified_surface" "$surface_id"
+
+unbound_state_dir="$tmp_dir/unbound-state"
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"SessionStart\",\"cwd\":\"/tmp/project\"}" |
+  TERM_PROGRAM=ghostty \
+  GHOSTX_STATE_DIR="$unbound_state_dir" \
+  "$repo_dir/libexec/bind-codex-session"
+[ ! -e "$unbound_state_dir/state.json" ] || fail "binding without a surface identity created state"
+
 # A Ghostty process launched before the first binding must still be marked as
 # handled. Creating state later in that same process must not trigger replay.
 empty_state_dir="$tmp_dir/empty-state"
@@ -43,10 +59,8 @@ GHOSTX_SKIP_WAIT=1 \
 
 printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"SessionStart\",\"cwd\":\"/tmp/project\"}" |
   TERM_PROGRAM=ghostty \
+  GHOSTX_SURFACE_ID="$surface_id" \
   GHOSTX_STATE_DIR="$state_dir" \
-  GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
-  GHOSTX_OSASCRIPT="$repo_dir/tests/mock-osascript.sh" \
-  GHOSTX_TTY="$tty_file" \
   "$repo_dir/libexec/bind-codex-session"
 
 bound_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$state_dir/state.json")
