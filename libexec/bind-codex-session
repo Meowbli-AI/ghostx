@@ -28,6 +28,41 @@ esac
 surface_id=${GHOSTX_SURFACE_ID:-}
 case "$surface_id" in
   ????????-????-????-????-????????????) ;;
+  *)
+    # Existing sessions do not inherit shell integration retroactively. Once
+    # one prompt has identified their surface, reuse that unambiguous mapping
+    # instead of asking Ghostty through AppleScript on every later prompt.
+    if [ -f "$state_file" ]; then
+      existing_surface=""
+      surface_ids=$(/usr/bin/plutil -extract surfaces raw -o - "$state_file" 2>/dev/null) || surface_ids=""
+      for candidate_surface in $surface_ids; do
+        candidate_session=$(
+          /usr/bin/plutil -extract "surfaces.$candidate_surface.session_id" raw -o - "$state_file" 2>/dev/null
+        ) || candidate_session=""
+        if [ "$candidate_session" = "$session_id" ]; then
+          if [ -n "$existing_surface" ]; then
+            existing_surface=""
+            break
+          fi
+          existing_surface=$candidate_surface
+        fi
+      done
+      surface_id=$existing_surface
+    fi
+    ;;
+esac
+case "$surface_id" in
+  ????????-????-????-????-????????????) ;;
+  *)
+    runtime_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd) || exit 0
+    identify_surface="$runtime_dir/libexec/identify-ghostty-surface"
+    if [ -x "$identify_surface" ]; then
+      surface_id=$("$identify_surface" 2>/dev/null) || surface_id=""
+    fi
+    ;;
+esac
+case "$surface_id" in
+  ????????-????-????-????-????????????) ;;
   *) exit 0 ;;
 esac
 

@@ -8,7 +8,8 @@ mechanisms:
 
 - Ghostty restores windows, tabs, splits, working directories, and stable
   terminal-surface UUIDs.
-- Codex `SessionStart` hooks expose the exact session UUID.
+- Codex lifecycle hooks expose the exact session UUID on session start and on
+  the next prompt in an already-running session.
 - zsh starts a one-shot restore helper when a restored Ghostty process opens
   its shells.
 
@@ -57,11 +58,13 @@ The installer is idempotent and preserves existing configuration. It:
    existing hooks.
 4. Adds one marked source block to `~/.zshrc`.
 
-The surface identity is exported during interactive shell startup. After the
-first install, open a new Ghostty tab or run `exec zsh`, then start a new Codex
-session or resume an existing one. Open `/hooks` once and trust the Ghostx hook
-if it is pending review. Sessions that were already running before installation
-are not bound retroactively.
+The surface identity is normally exported during interactive shell startup.
+After the first install, open `/hooks` once and trust the Ghostx hooks if they
+are pending review. New and resumed Codex sessions bind at `SessionStart`.
+Sessions that were already running bind on their next ordinary prompt; if they
+predate the shell integration, the hook resolves the current Ghostty surface
+directly from their controlling TTY. No `exec zsh`, new chat, or resume cycle is
+required.
 
 On the next Ghostty relaunch, restored surfaces automatically receive their
 exact `codex resume <UUID>` command.
@@ -76,9 +79,10 @@ because quitting Ghostty terminates the processes running in its surfaces.
 At interactive shell startup, the zsh integration temporarily sets a unique
 terminal title through `/dev/tty`, resolves that title to Ghostty's stable
 terminal UUID through AppleScript, immediately restores the previous title,
-and exports the UUID as `GHOSTX_SURFACE_ID`. The Codex hook receives
-`session_id` on stdin and combines it with that exported surface identity. The
-mapping is stored at:
+and exports the UUID as `GHOSTX_SURFACE_ID`. The Codex hooks receive
+`session_id` on stdin and combine it with that exported surface identity. If an
+older Codex process does not have the environment variable, the hook performs
+the same TTY lookup itself. The mapping is stored at:
 
 ```text
 ${XDG_STATE_HOME:-~/.local/state}/ghostx/state.json

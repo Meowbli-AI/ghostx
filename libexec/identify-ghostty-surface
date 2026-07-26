@@ -27,7 +27,7 @@ trap restore_title EXIT HUP INT TERM
 
 surface_id=""
 attempt=0
-while [ "$attempt" -lt 20 ]; do
+while [ "$attempt" -lt 4 ]; do
   surface_id=$(
     "$osascript_bin" "$applescript_dir/find-terminal-by-title.applescript" "$marker" 2>/dev/null
   ) || surface_id=""

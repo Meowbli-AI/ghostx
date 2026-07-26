@@ -12,6 +12,18 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__GHOSTX_RUNTIME__/libexec/bind-codex-session",
+            "timeout": 10,
+            "statusMessage": "Saving this Codex session for Ghostty restoration"
+          }
+        ]
+      }
     ]
   }
 }

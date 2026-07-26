@@ -58,67 +58,84 @@ fi
 hooks_mode=$(stat -f '%Lp' "$hooks_file")
 /usr/bin/plutil -convert json -o - "$hooks_file" >/dev/null
 
-ghostx_hook_present=0
-ghostx_hook_index=""
-if /usr/bin/plutil -type hooks.SessionStart "$hooks_file" >/dev/null 2>&1; then
-  session_start_count=$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$hooks_file" 2>/dev/null || printf '0')
-  session_start_index=0
-  while [ "$session_start_index" -lt "$session_start_count" ]; do
-    installed_command=$(
-      /usr/bin/plutil -extract "hooks.SessionStart.$session_start_index.hooks.0.command" raw -o - "$hooks_file" 2>/dev/null || true
-    )
-    case "$installed_command" in
-      *ghostx/runtime/libexec/bind-codex-session*)
-        ghostx_hook_present=1
-        ghostx_hook_index=$session_start_index
-        break
-        ;;
-    esac
-    session_start_index=$((session_start_index + 1))
-  done
-fi
+ensure_codex_hook() {
+  event_name=$1
+  matcher_value=$2
+  status_message=$3
+  event_path="hooks.$event_name"
+  ghostx_hook_present=0
+  ghostx_hook_index=""
 
-if [ "$ghostx_hook_present" -eq 0 ]; then
+  if /usr/bin/plutil -type "$event_path" "$hooks_file" >/dev/null 2>&1; then
+    event_count=$(/usr/bin/plutil -extract "$event_path" raw -o - "$hooks_file" 2>/dev/null || printf '0')
+    event_index=0
+    while [ "$event_index" -lt "$event_count" ]; do
+      installed_command=$(
+        /usr/bin/plutil -extract "$event_path.$event_index.hooks.0.command" raw -o - "$hooks_file" 2>/dev/null || true
+      )
+      case "$installed_command" in
+        *ghostx/runtime/libexec/bind-codex-session*)
+          ghostx_hook_present=1
+          ghostx_hook_index=$event_index
+          break
+          ;;
+      esac
+      event_index=$((event_index + 1))
+    done
+  fi
+
   tmp_hooks=$(mktemp "$codex_dir/hooks.XXXXXX")
   cp "$hooks_file" "$tmp_hooks"
 
-  if ! /usr/bin/plutil -type hooks "$tmp_hooks" >/dev/null 2>&1; then
-    /usr/bin/plutil -insert hooks -dictionary "$tmp_hooks"
-  fi
-  if ! /usr/bin/plutil -type hooks.SessionStart "$tmp_hooks" >/dev/null 2>&1; then
-    /usr/bin/plutil -insert hooks.SessionStart -array "$tmp_hooks"
+  if [ "$ghostx_hook_present" -eq 0 ]; then
+    if ! /usr/bin/plutil -type hooks "$tmp_hooks" >/dev/null 2>&1; then
+      /usr/bin/plutil -insert hooks -dictionary "$tmp_hooks"
+    fi
+    if ! /usr/bin/plutil -type "$event_path" "$tmp_hooks" >/dev/null 2>&1; then
+      /usr/bin/plutil -insert "$event_path" -array "$tmp_hooks"
+    fi
+
+    hook_index=$(/usr/bin/plutil -extract "$event_path" raw -o - "$tmp_hooks")
+    hook_path="$event_path.$hook_index"
+    /usr/bin/plutil -insert "$hook_path" -dictionary "$tmp_hooks"
+    if [ -n "$matcher_value" ]; then
+      /usr/bin/plutil -insert "$hook_path.matcher" -string "$matcher_value" "$tmp_hooks"
+    fi
+    /usr/bin/plutil -insert "$hook_path.hooks" -array "$tmp_hooks"
+    /usr/bin/plutil -insert "$hook_path.hooks.0" -dictionary "$tmp_hooks"
+    /usr/bin/plutil -insert "$hook_path.hooks.0.type" -string 'command' "$tmp_hooks"
+    /usr/bin/plutil -insert "$hook_path.hooks.0.command" -string "$runtime_dir/libexec/bind-codex-session" "$tmp_hooks"
+    /usr/bin/plutil -insert "$hook_path.hooks.0.timeout" -integer 10 "$tmp_hooks"
+    /usr/bin/plutil -insert "$hook_path.hooks.0.statusMessage" -string "$status_message" "$tmp_hooks"
+  else
+    hook_path="$event_path.$ghostx_hook_index"
+    if /usr/bin/plutil -type "$hook_path.hooks.0.timeout" "$tmp_hooks" >/dev/null 2>&1; then
+      /usr/bin/plutil -replace "$hook_path.hooks.0.timeout" -integer 10 "$tmp_hooks"
+    else
+      /usr/bin/plutil -insert "$hook_path.hooks.0.timeout" -integer 10 "$tmp_hooks"
+    fi
+    if [ -n "$matcher_value" ]; then
+      if /usr/bin/plutil -type "$hook_path.matcher" "$tmp_hooks" >/dev/null 2>&1; then
+        /usr/bin/plutil -replace "$hook_path.matcher" -string "$matcher_value" "$tmp_hooks"
+      else
+        /usr/bin/plutil -insert "$hook_path.matcher" -string "$matcher_value" "$tmp_hooks"
+      fi
+    fi
   fi
 
-  hook_index=$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$tmp_hooks")
-  hook_path="hooks.SessionStart.$hook_index"
-  /usr/bin/plutil -insert "$hook_path" -dictionary "$tmp_hooks"
-  /usr/bin/plutil -insert "$hook_path.matcher" -string 'startup|resume|clear' "$tmp_hooks"
-  /usr/bin/plutil -insert "$hook_path.hooks" -array "$tmp_hooks"
-  /usr/bin/plutil -insert "$hook_path.hooks.0" -dictionary "$tmp_hooks"
-  /usr/bin/plutil -insert "$hook_path.hooks.0.type" -string 'command' "$tmp_hooks"
-  /usr/bin/plutil -insert "$hook_path.hooks.0.command" -string "$runtime_dir/libexec/bind-codex-session" "$tmp_hooks"
-  /usr/bin/plutil -insert "$hook_path.hooks.0.timeout" -integer 10 "$tmp_hooks"
-  /usr/bin/plutil -insert "$hook_path.hooks.0.statusMessage" -string 'Binding this Codex session to its terminal' "$tmp_hooks"
   /usr/bin/plutil -convert json -r "$tmp_hooks"
   mv "$tmp_hooks" "$hooks_file"
   chmod "$hooks_mode" "$hooks_file"
-else
-  installed_timeout=$(
-    /usr/bin/plutil -extract "hooks.SessionStart.$ghostx_hook_index.hooks.0.timeout" raw -o - "$hooks_file" 2>/dev/null || true
-  )
-  if [ "$installed_timeout" != "10" ]; then
-    tmp_hooks=$(mktemp "$codex_dir/hooks.XXXXXX")
-    cp "$hooks_file" "$tmp_hooks"
-    if /usr/bin/plutil -type "hooks.SessionStart.$ghostx_hook_index.hooks.0.timeout" "$tmp_hooks" >/dev/null 2>&1; then
-      /usr/bin/plutil -replace "hooks.SessionStart.$ghostx_hook_index.hooks.0.timeout" -integer 10 "$tmp_hooks"
-    else
-      /usr/bin/plutil -insert "hooks.SessionStart.$ghostx_hook_index.hooks.0.timeout" -integer 10 "$tmp_hooks"
-    fi
-    /usr/bin/plutil -convert json -r "$tmp_hooks"
-    mv "$tmp_hooks" "$hooks_file"
-    chmod "$hooks_mode" "$hooks_file"
-  fi
-fi
+}
+
+ensure_codex_hook \
+  SessionStart \
+  'startup|resume|clear' \
+  'Binding this Codex session to its terminal'
+ensure_codex_hook \
+  UserPromptSubmit \
+  '' \
+  'Saving this Codex session for Ghostty restoration'
 
 touch "$zshrc"
 if ! grep -Fq '# >>> ghostx >>>' "$zshrc"; then
@@ -145,5 +162,5 @@ if [ -n "$instance_id" ]; then
 fi
 
 printf '%s\n' "Ghostx installed."
-printf '%s\n' "Next: open a new Ghostty shell (or run exec zsh), then start or resume Codex."
-printf '%s\n' "Open /hooks once and trust the Ghostx SessionStart hook if it is pending review."
+printf '%s\n' "Next: continue an existing Codex session, start one, or resume one in Ghostty."
+printf '%s\n' "Open /hooks once and trust the Ghostx hooks if they are pending review."

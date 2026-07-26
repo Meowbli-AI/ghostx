@@ -26,21 +26,28 @@ remove_marked_block() {
 remove_marked_block "$ghostty_config"
 remove_marked_block "$zshrc"
 
-if [ -f "$hooks_file" ] && /usr/bin/plutil -convert json -o - "$hooks_file" >/dev/null 2>&1; then
-  count=$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$hooks_file" 2>/dev/null || printf '0')
+remove_codex_hook_event() {
+  event_name=$1
+  event_path="hooks.$event_name"
+  count=$(/usr/bin/plutil -extract "$event_path" raw -o - "$hooks_file" 2>/dev/null || printf '0')
   index=0
   while [ "$index" -lt "$count" ]; do
     command_value=$(
-      /usr/bin/plutil -extract "hooks.SessionStart.$index.hooks.0.command" raw -o - "$hooks_file" 2>/dev/null || true
+      /usr/bin/plutil -extract "$event_path.$index.hooks.0.command" raw -o - "$hooks_file" 2>/dev/null || true
     )
     case "$command_value" in
       *ghostx/runtime/libexec/bind-codex-session*)
-        /usr/bin/plutil -remove "hooks.SessionStart.$index" "$hooks_file"
+        /usr/bin/plutil -remove "$event_path.$index" "$hooks_file"
         count=$((count - 1))
         ;;
       *) index=$((index + 1)) ;;
     esac
   done
+}
+
+if [ -f "$hooks_file" ] && /usr/bin/plutil -convert json -o - "$hooks_file" >/dev/null 2>&1; then
+  remove_codex_hook_event SessionStart
+  remove_codex_hook_event UserPromptSubmit
   /usr/bin/plutil -convert json -r "$hooks_file"
 fi
 
