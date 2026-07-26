@@ -59,6 +59,7 @@ hooks_mode=$(stat -f '%Lp' "$hooks_file")
 /usr/bin/plutil -convert json -o - "$hooks_file" >/dev/null
 
 ghostx_hook_present=0
+ghostx_hook_index=""
 if /usr/bin/plutil -type hooks.SessionStart "$hooks_file" >/dev/null 2>&1; then
   session_start_count=$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$hooks_file" 2>/dev/null || printf '0')
   session_start_index=0
@@ -69,6 +70,7 @@ if /usr/bin/plutil -type hooks.SessionStart "$hooks_file" >/dev/null 2>&1; then
     case "$installed_command" in
       *ghostx/runtime/libexec/bind-codex-session*)
         ghostx_hook_present=1
+        ghostx_hook_index=$session_start_index
         break
         ;;
     esac
@@ -95,11 +97,27 @@ if [ "$ghostx_hook_present" -eq 0 ]; then
   /usr/bin/plutil -insert "$hook_path.hooks.0" -dictionary "$tmp_hooks"
   /usr/bin/plutil -insert "$hook_path.hooks.0.type" -string 'command' "$tmp_hooks"
   /usr/bin/plutil -insert "$hook_path.hooks.0.command" -string "$runtime_dir/libexec/bind-codex-session" "$tmp_hooks"
-  /usr/bin/plutil -insert "$hook_path.hooks.0.timeout" -integer 3 "$tmp_hooks"
+  /usr/bin/plutil -insert "$hook_path.hooks.0.timeout" -integer 10 "$tmp_hooks"
   /usr/bin/plutil -insert "$hook_path.hooks.0.statusMessage" -string 'Binding this Codex session to its terminal' "$tmp_hooks"
   /usr/bin/plutil -convert json -r "$tmp_hooks"
   mv "$tmp_hooks" "$hooks_file"
   chmod "$hooks_mode" "$hooks_file"
+else
+  installed_timeout=$(
+    /usr/bin/plutil -extract "hooks.SessionStart.$ghostx_hook_index.hooks.0.timeout" raw -o - "$hooks_file" 2>/dev/null || true
+  )
+  if [ "$installed_timeout" != "10" ]; then
+    tmp_hooks=$(mktemp "$codex_dir/hooks.XXXXXX")
+    cp "$hooks_file" "$tmp_hooks"
+    if /usr/bin/plutil -type "hooks.SessionStart.$ghostx_hook_index.hooks.0.timeout" "$tmp_hooks" >/dev/null 2>&1; then
+      /usr/bin/plutil -replace "hooks.SessionStart.$ghostx_hook_index.hooks.0.timeout" -integer 10 "$tmp_hooks"
+    else
+      /usr/bin/plutil -insert "hooks.SessionStart.$ghostx_hook_index.hooks.0.timeout" -integer 10 "$tmp_hooks"
+    fi
+    /usr/bin/plutil -convert json -r "$tmp_hooks"
+    mv "$tmp_hooks" "$hooks_file"
+    chmod "$hooks_mode" "$hooks_file"
+  fi
 fi
 
 touch "$zshrc"

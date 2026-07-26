@@ -116,16 +116,19 @@ hook_count=$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$fake_home/.c
 assert_eq "$hook_count" "2"
 hook_command=$(/usr/bin/plutil -extract hooks.SessionStart.1.hooks.0.command raw -o - "$fake_home/.codex/hooks.json")
 assert_eq "$hook_command" "$fake_home/.local/share/ghostx/runtime/libexec/bind-codex-session"
+assert_eq "$(/usr/bin/plutil -extract hooks.SessionStart.1.hooks.0.timeout raw -o - "$fake_home/.codex/hooks.json")" "10"
 assert_eq "$(stat -f '%Lp' "$fake_home/.codex/hooks.json")" "$original_hooks_mode"
 grep -Fq 'theme = Existing Theme' "$fake_home/Library/Application Support/com.mitchellh.ghostty/config" || fail "installer removed Ghostty config"
 grep -Fq 'window-save-state = always' "$fake_home/Library/Application Support/com.mitchellh.ghostty/config" || fail "installer did not enable restoration"
 grep -Fq '# existing zsh config' "$fake_home/.zshrc" || fail "installer removed zsh config"
 
 # Reinstalling must not duplicate marked blocks or hooks.
+/usr/bin/plutil -replace hooks.SessionStart.1.hooks.0.timeout -integer 3 "$fake_home/.codex/hooks.json"
 HOME="$fake_home" "$repo_dir/install.sh" >/dev/null
 assert_eq "$(grep -Fc '# >>> ghostx >>>' "$fake_home/.zshrc")" "1"
 assert_eq "$(grep -Fc '# >>> ghostx >>>' "$fake_home/Library/Application Support/com.mitchellh.ghostty/config")" "1"
 assert_eq "$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$fake_home/.codex/hooks.json")" "2"
+assert_eq "$(/usr/bin/plutil -extract hooks.SessionStart.1.hooks.0.timeout raw -o - "$fake_home/.codex/hooks.json")" "10"
 
 HOME="$fake_home" "$repo_dir/uninstall.sh" >/dev/null
 grep -Fq 'existing-hook' "$fake_home/.codex/hooks.json" || fail "uninstaller removed an existing hook"
