@@ -9,6 +9,43 @@ umask 077
 
 state_dir=${GHOSTX_STATE_DIR:-"${XDG_STATE_HOME:-$HOME/.local/state}/ghostx"}
 state_file="$state_dir/state.json"
+ps_bin=${GHOSTX_PS:-/bin/ps}
+
+resolve_ancestor_tty() {
+  ancestor_pid=${PPID:-}
+  attempts=0
+
+  while [ "$attempts" -lt 12 ]; do
+    case "$ancestor_pid" in
+      *[!0-9]* | "" | 0 | 1) return 1 ;;
+    esac
+
+    tty_name=$("$ps_bin" -o tty= -p "$ancestor_pid" 2>/dev/null | /usr/bin/awk 'NF { print $1; exit }')
+    case "$tty_name" in
+      ttys[0-9]*)
+        tty_suffix=${tty_name#ttys}
+        case "$tty_suffix" in
+          *[!0-9]* | "") ;;
+          *) printf '/dev/%s\n' "$tty_name"; return 0 ;;
+        esac
+        ;;
+      pts/[0-9]*)
+        tty_suffix=${tty_name#pts/}
+        case "$tty_suffix" in
+          *[!0-9]* | "") ;;
+          *) printf '/dev/%s\n' "$tty_name"; return 0 ;;
+        esac
+        ;;
+    esac
+
+    parent_pid=$("$ps_bin" -o ppid= -p "$ancestor_pid" 2>/dev/null | /usr/bin/awk 'NF { print $1; exit }')
+    [ "$parent_pid" != "$ancestor_pid" ] || return 1
+    ancestor_pid=$parent_pid
+    attempts=$((attempts + 1))
+  done
+
+  return 1
+}
 
 payload=$(cat) || exit 0
 session_id=$(printf '%s' "$payload" | /usr/bin/plutil -extract session_id raw -o - - 2>/dev/null) || exit 0
@@ -55,9 +92,15 @@ case "$surface_id" in
   ????????-????-????-????-????????????) ;;
   *)
     runtime_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd) || exit 0
-    identify_surface="$runtime_dir/libexec/identify-ghostty-surface"
+    identify_surface=${GHOSTX_IDENTIFY_SURFACE:-"$runtime_dir/libexec/identify-ghostty-surface"}
     if [ -x "$identify_surface" ]; then
-      surface_id=$("$identify_surface" 2>/dev/null) || surface_id=""
+      tty_path=${GHOSTX_TTY:-}
+      if [ -z "$tty_path" ]; then
+        tty_path=$(resolve_ancestor_tty) || tty_path=""
+      fi
+      if [ -n "$tty_path" ]; then
+        surface_id=$(GHOSTX_TTY="$tty_path" "$identify_surface" 2>/dev/null) || surface_id=""
+      fi
     fi
     ;;
 esac

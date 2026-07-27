@@ -58,6 +58,50 @@ printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptS
 fallback_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$fallback_state_dir/state.json")
 assert_eq "$fallback_session" "$session_id"
 
+# Hook subprocesses may not have their own controlling TTY. Walk up to the
+# Codex ancestor and pass its TTY explicitly to surface identification.
+ancestor_bin_dir="$tmp_dir/ancestor-bin"
+ancestor_state_dir="$tmp_dir/ancestor-state"
+ancestor_tty_log="$tmp_dir/ancestor-tty.log"
+mkdir -p "$ancestor_bin_dir"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "$2:$4" in' \
+  "  tty=:4242) printf '%s\\n' ttys777 ;;" \
+  "  tty=:*) printf '%s\\n' '??' ;;" \
+  "  ppid=:*) printf '%s\\n' 4242 ;;" \
+  'esac' \
+  >"$ancestor_bin_dir/ps"
+printf '%s\n' \
+  '#!/bin/sh' \
+  "printf '%s\\n' \"\$GHOSTX_TTY\" >\"\$GHOSTX_TEST_TTY_LOG\"" \
+  "printf '%s\\n' '$surface_id'" \
+  >"$ancestor_bin_dir/identify"
+chmod 755 "$ancestor_bin_dir/ps" "$ancestor_bin_dir/identify"
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+  TERM_PROGRAM=ghostty \
+  GHOSTX_SURFACE_ID= \
+  GHOSTX_TTY= \
+  GHOSTX_STATE_DIR="$ancestor_state_dir" \
+  GHOSTX_PS="$ancestor_bin_dir/ps" \
+  GHOSTX_IDENTIFY_SURFACE="$ancestor_bin_dir/identify" \
+  GHOSTX_TEST_TTY_LOG="$ancestor_tty_log" \
+  "$repo_dir/libexec/bind-codex-session"
+ancestor_tty=$(/usr/bin/sed -n '1p' "$ancestor_tty_log")
+assert_eq "$ancestor_tty" "/dev/ttys777"
+ancestor_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$ancestor_state_dir/state.json")
+assert_eq "$ancestor_session" "$session_id"
+
+# Inherited Ghostx variables must never turn an IDE terminal into a Ghostty
+# restoration target.
+non_ghostty_state_dir="$tmp_dir/non-ghostty-state"
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+  TERM_PROGRAM=vscode \
+  GHOSTX_SURFACE_ID="$surface_id" \
+  GHOSTX_STATE_DIR="$non_ghostty_state_dir" \
+  "$repo_dir/libexec/bind-codex-session"
+[ ! -e "$non_ghostty_state_dir/state.json" ] || fail "non-Ghostty session created state"
+
 # Installation can backfill a Codex process that has not loaded the new hook.
 # The rollout filename supplies session identity without reading its contents.
 backfill_bin_dir="$tmp_dir/backfill-bin"
