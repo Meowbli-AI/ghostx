@@ -92,6 +92,50 @@ assert_eq "$ancestor_tty" "/dev/ttys777"
 ancestor_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$ancestor_state_dir/state.json")
 assert_eq "$ancestor_session" "$session_id"
 
+# The transcript is a stronger link than process ancestry because Codex hook
+# runners do not have to remain descendants of the TUI process.
+transcript_bin_dir="$tmp_dir/transcript-bin"
+transcript_state_dir="$tmp_dir/transcript-state"
+transcript_tty_log="$tmp_dir/transcript-tty.log"
+transcript_path="$tmp_dir/rollout-$session_id.jsonl"
+mkdir -p "$transcript_bin_dir"
+: >"$transcript_path"
+printf '%s\n' \
+  '#!/bin/sh' \
+  "[ \"\$1\" = -t ] || exit 1" \
+  "[ \"\$2\" = -- ] || exit 1" \
+  "[ \"\$3\" = '$transcript_path' ] || exit 1" \
+  "printf '%s\\n' 32397" \
+  >"$transcript_bin_dir/lsof"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "$2:$4" in' \
+  "  comm=:32397) printf '%s\\n' codex ;;" \
+  "  tty=:32397) printf '%s\\n' ttys006 ;;" \
+  "  *) exit 1 ;;" \
+  'esac' \
+  >"$transcript_bin_dir/ps"
+printf '%s\n' \
+  '#!/bin/sh' \
+  "printf '%s\\n' \"\$GHOSTX_TTY\" >\"\$GHOSTX_TEST_TTY_LOG\"" \
+  "printf '%s\\n' '$surface_id'" \
+  >"$transcript_bin_dir/identify"
+chmod 755 "$transcript_bin_dir/lsof" "$transcript_bin_dir/ps" "$transcript_bin_dir/identify"
+printf '%s\n' "{\"session_id\":\"$session_id\",\"transcript_path\":\"$transcript_path\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+  TERM_PROGRAM=ghostty \
+  GHOSTX_SURFACE_ID= \
+  GHOSTX_TTY= \
+  GHOSTX_STATE_DIR="$transcript_state_dir" \
+  GHOSTX_PS="$transcript_bin_dir/ps" \
+  GHOSTX_LSOF="$transcript_bin_dir/lsof" \
+  GHOSTX_IDENTIFY_SURFACE="$transcript_bin_dir/identify" \
+  GHOSTX_TEST_TTY_LOG="$transcript_tty_log" \
+  "$repo_dir/libexec/bind-codex-session"
+transcript_tty=$(/usr/bin/sed -n '1p' "$transcript_tty_log")
+assert_eq "$transcript_tty" "/dev/ttys006"
+transcript_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$transcript_state_dir/state.json")
+assert_eq "$transcript_session" "$session_id"
+
 # Inherited Ghostx variables must never turn an IDE terminal into a Ghostty
 # restoration target.
 non_ghostty_state_dir="$tmp_dir/non-ghostty-state"
