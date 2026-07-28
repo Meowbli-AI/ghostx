@@ -92,6 +92,28 @@ assert_eq "$ancestor_tty" "/dev/ttys777"
 ancestor_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$ancestor_state_dir/state.json")
 assert_eq "$ancestor_session" "$session_id"
 
+# A stalled transcript-owner lookup must fall back before Codex's outer hook
+# deadline instead of blocking the user prompt.
+printf '%s\n' \
+  '#!/bin/sh' \
+  'sleep 3' \
+  >"$ancestor_bin_dir/slow-lsof"
+chmod 755 "$ancestor_bin_dir/slow-lsof"
+bounded_state_dir="$tmp_dir/bounded-state"
+printf '%s\n' "{\"session_id\":\"$session_id\",\"transcript_path\":\"/tmp/stalled-rollout.jsonl\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+  TERM_PROGRAM=ghostty \
+  GHOSTX_SURFACE_ID= \
+  GHOSTX_TTY= \
+  GHOSTX_STATE_DIR="$bounded_state_dir" \
+  GHOSTX_PS="$ancestor_bin_dir/ps" \
+  GHOSTX_LSOF="$ancestor_bin_dir/slow-lsof" \
+  GHOSTX_LSOF_TIMEOUT=1 \
+  GHOSTX_IDENTIFY_SURFACE="$ancestor_bin_dir/identify" \
+  GHOSTX_TEST_TTY_LOG="$ancestor_tty_log" \
+  "$repo_dir/libexec/bind-codex-session"
+bounded_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$bounded_state_dir/state.json")
+assert_eq "$bounded_session" "$session_id"
+
 # The transcript is a stronger link than process ancestry because Codex hook
 # runners do not have to remain descendants of the TUI process.
 transcript_bin_dir="$tmp_dir/transcript-bin"
@@ -250,6 +272,7 @@ original_hooks_mode=$(stat -f '%Lp' "$fake_home/.codex/hooks.json")
 
 HOME="$fake_home" GHOSTX_SKIP_BACKFILL=1 "$repo_dir/install.sh" >/dev/null
 grep -Fq 'existing-hook' "$fake_home/.codex/hooks.json" || fail "installer removed an existing hook"
+[ -x "$fake_home/.local/share/ghostx/runtime/libexec/run-with-timeout" ] || fail "installer omitted timeout helper"
 hook_count=$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$fake_home/.codex/hooks.json")
 assert_eq "$hook_count" "2"
 hook_command=$(/usr/bin/plutil -extract hooks.SessionStart.1.hooks.0.command raw -o - "$fake_home/.codex/hooks.json")

@@ -1,0 +1,43 @@
+#!/bin/sh
+
+# Run one command with a wall-clock deadline. This keeps lifecycle hooks from
+# blocking Codex even when a macOS process query or Apple event stalls.
+
+set -u
+
+timeout_seconds=${1:-}
+shift || exit 2
+
+case "$timeout_seconds" in
+  *[!0-9]* | "" | 0) exit 2 ;;
+esac
+[ "$#" -gt 0 ] || exit 2
+
+command_pid=""
+watchdog_pid=""
+cleanup() {
+  [ -z "$watchdog_pid" ] || kill "$watchdog_pid" 2>/dev/null || true
+  [ -z "$command_pid" ] || kill "$command_pid" 2>/dev/null || true
+}
+trap 'cleanup; exit 130' HUP INT TERM
+
+"$@" &
+command_pid=$!
+
+(
+  sleep "$timeout_seconds"
+  kill -TERM "$command_pid" 2>/dev/null || exit 0
+  sleep 0.1
+  kill -KILL "$command_pid" 2>/dev/null || true
+) &
+watchdog_pid=$!
+
+wait "$command_pid" 2>/dev/null
+command_status=$?
+command_pid=""
+
+kill "$watchdog_pid" 2>/dev/null || true
+wait "$watchdog_pid" 2>/dev/null || true
+watchdog_pid=""
+
+exit "$command_status"

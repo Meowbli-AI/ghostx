@@ -7,10 +7,12 @@
 set -u
 umask 077
 
+runtime_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd) || exit 0
 state_dir=${GHOSTX_STATE_DIR:-"${XDG_STATE_HOME:-$HOME/.local/state}/ghostx"}
 state_file="$state_dir/state.json"
 ps_bin=${GHOSTX_PS:-/bin/ps}
 lsof_bin=${GHOSTX_LSOF:-/usr/sbin/lsof}
+timeout_runner=${GHOSTX_TIMEOUT_RUNNER:-"$runtime_dir/libexec/run-with-timeout"}
 
 resolve_pid_tty() {
   target_pid=$1
@@ -42,8 +44,10 @@ resolve_pid_tty() {
 resolve_transcript_tty() {
   [ -n "$transcript_path" ] || return 1
   [ -x "$lsof_bin" ] || return 1
+  [ -x "$timeout_runner" ] || return 1
 
-  owner_pids=$("$lsof_bin" -t -- "$transcript_path" 2>/dev/null) || owner_pids=""
+  lsof_timeout=${GHOSTX_LSOF_TIMEOUT:-1}
+  owner_pids=$("$timeout_runner" "$lsof_timeout" "$lsof_bin" -t -- "$transcript_path" 2>/dev/null) || owner_pids=""
   for owner_pid in $owner_pids; do
     process_name=$("$ps_bin" -o comm= -p "$owner_pid" 2>/dev/null | /usr/bin/awk 'NF { print $1; exit }')
     process_name=${process_name##*/}
@@ -119,7 +123,6 @@ esac
 case "$surface_id" in
   ????????-????-????-????-????????????) ;;
   *)
-    runtime_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd) || exit 0
     identify_surface=${GHOSTX_IDENTIFY_SURFACE:-"$runtime_dir/libexec/identify-ghostty-surface"}
     if [ -x "$identify_surface" ]; then
       tty_path=${GHOSTX_TTY:-}

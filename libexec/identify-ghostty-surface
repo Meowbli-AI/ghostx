@@ -9,6 +9,8 @@ runtime_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd) || exit 
 applescript_dir=${GHOSTX_APPLESCRIPT_DIR:-"$runtime_dir/applescript"}
 osascript_bin=${GHOSTX_OSASCRIPT:-/usr/bin/osascript}
 tty_path=${GHOSTX_TTY:-/dev/tty}
+timeout_runner=${GHOSTX_TIMEOUT_RUNNER:-"$runtime_dir/libexec/run-with-timeout"}
+lookup_timeout=${GHOSTX_LOOKUP_TIMEOUT:-1}
 
 case ${TERM_PROGRAM:-} in
   ghostty|Ghostty) ;;
@@ -17,6 +19,7 @@ esac
 
 [ -w "$tty_path" ] || exit 0
 [ -r "$applescript_dir/find-terminal-by-title.applescript" ] || exit 0
+[ -x "$timeout_runner" ] || exit 0
 
 marker="ghostx-surface:$$:$(date +%s)"
 printf '\033[22;0t\033]2;%s\007' "$marker" >"$tty_path" 2>/dev/null || exit 0
@@ -29,7 +32,8 @@ surface_id=""
 attempt=0
 while [ "$attempt" -lt 4 ]; do
   surface_id=$(
-    "$osascript_bin" "$applescript_dir/find-terminal-by-title.applescript" "$marker" 2>/dev/null
+    "$timeout_runner" "$lookup_timeout" \
+      "$osascript_bin" "$applescript_dir/find-terminal-by-title.applescript" "$marker" 2>/dev/null
   ) || surface_id=""
   [ -n "$surface_id" ] && break
   sleep 0.05

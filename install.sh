@@ -31,13 +31,15 @@ cp "$repo_dir/libexec/bind-codex-session" "$runtime_dir/libexec/"
 cp "$repo_dir/libexec/backfill-codex-sessions" "$runtime_dir/libexec/"
 cp "$repo_dir/libexec/identify-ghostty-surface" "$runtime_dir/libexec/"
 cp "$repo_dir/libexec/restore-codex-sessions" "$runtime_dir/libexec/"
+cp "$repo_dir/libexec/run-with-timeout" "$runtime_dir/libexec/"
 cp "$repo_dir"/applescript/*.applescript "$runtime_dir/applescript/"
 cp "$repo_dir/shell/ghostx.zsh" "$runtime_dir/shell/"
 chmod 755 \
   "$runtime_dir/libexec/backfill-codex-sessions" \
   "$runtime_dir/libexec/bind-codex-session" \
   "$runtime_dir/libexec/identify-ghostty-surface" \
-  "$runtime_dir/libexec/restore-codex-sessions"
+  "$runtime_dir/libexec/restore-codex-sessions" \
+  "$runtime_dir/libexec/run-with-timeout"
 chmod 644 "$runtime_dir"/applescript/*.applescript "$runtime_dir/shell/ghostx.zsh"
 
 mkdir -p "$(dirname -- "$ghostty_config")"
