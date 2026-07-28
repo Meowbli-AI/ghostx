@@ -1,46 +1,51 @@
-#!/bin/sh
+#!/usr/bin/perl
 
-# Run one command with a wall-clock deadline. This keeps lifecycle hooks from
-# blocking Codex even when a macOS process query or Apple event stalls.
+# Run one command with a wall-clock deadline while preserving stdin. Ghostx is
+# macOS-only and uses the system Perl so completed hooks return immediately
+# instead of waiting for a background shell timer to finish.
 
-set -u
+use strict;
+use warnings;
+use POSIX qw(WNOHANG);
+use Time::HiRes qw(sleep time);
 
-timeout_seconds=${1:-}
-shift || exit 2
+@ARGV >= 2 or exit 2;
+my $timeout_seconds = shift @ARGV;
+$timeout_seconds =~ /^[1-9][0-9]*$/ or exit 2;
 
-case "$timeout_seconds" in
-  *[!0-9]* | "" | 0) exit 2 ;;
-esac
-[ "$#" -gt 0 ] || exit 2
+my $command_pid = fork();
+defined $command_pid or exit 2;
 
-command_pid=""
-watchdog_pid=""
-cleanup() {
-  [ -z "$watchdog_pid" ] || kill "$watchdog_pid" 2>/dev/null || true
-  [ -z "$command_pid" ] || kill "$command_pid" 2>/dev/null || true
+if ($command_pid == 0) {
+    exec @ARGV;
+    exit 127;
 }
-trap 'cleanup; exit 130' HUP INT TERM
 
-# POSIX shells may attach /dev/null to asynchronous commands unless stdin is
-# redirected explicitly. Preserve hook payloads for wrapped commands.
-exec 3<&0
-"$@" <&3 &
-command_pid=$!
+my $command_status;
+my $deadline = time + $timeout_seconds;
 
-(
-  sleep "$timeout_seconds"
-  kill -TERM "$command_pid" 2>/dev/null || exit 0
-  sleep 0.1
-  kill -KILL "$command_pid" 2>/dev/null || true
-) &
-watchdog_pid=$!
+while (1) {
+    my $waited = waitpid($command_pid, WNOHANG);
+    if ($waited == $command_pid) {
+        $command_status = $?;
+        last;
+    }
+    if ($waited == -1) {
+        $command_status = -1;
+        last;
+    }
+    last if time >= $deadline;
+    sleep 0.02;
+}
 
-wait "$command_pid" 2>/dev/null
-command_status=$?
-command_pid=""
+if (!defined $command_status) {
+    kill 'TERM', $command_pid;
+    sleep 0.1;
+    kill 'KILL', $command_pid if kill 0, $command_pid;
+    waitpid($command_pid, 0);
+    exit 124;
+}
 
-kill "$watchdog_pid" 2>/dev/null || true
-wait "$watchdog_pid" 2>/dev/null || true
-watchdog_pid=""
-
-exit "$command_status"
+exit 127 if $command_status == -1;
+exit 128 + ($command_status & 127) if $command_status & 127;
+exit $command_status >> 8;

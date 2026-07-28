@@ -1,44 +1,34 @@
 #!/bin/sh
 
-# Resolve the current interactive Ghostty shell to its stable surface UUID.
-# This must run from shell startup, where /dev/tty is a real controlling TTY.
+# Resolve the focused Ghostty terminal to its stable surface UUID. The caller's
+# working directory must match so a hook from another app cannot bind to it.
 
 set -u
 
 runtime_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd) || exit 0
 applescript_dir=${GHOSTX_APPLESCRIPT_DIR:-"$runtime_dir/applescript"}
 osascript_bin=${GHOSTX_OSASCRIPT:-/usr/bin/osascript}
-tty_path=${GHOSTX_TTY:-/dev/tty}
 timeout_runner=${GHOSTX_TIMEOUT_RUNNER:-"$runtime_dir/libexec/run-with-timeout"}
 lookup_timeout=${GHOSTX_LOOKUP_TIMEOUT:-1}
+expected_directory=${1:-${GHOSTX_CWD:-${PWD:-}}}
 
 case ${TERM_PROGRAM:-} in
   ghostty|Ghostty) ;;
   *) exit 0 ;;
 esac
 
-[ -w "$tty_path" ] || exit 0
-[ -r "$applescript_dir/find-terminal-by-title.applescript" ] || exit 0
+[ -n "$expected_directory" ] || exit 0
+[ -d "$expected_directory" ] || exit 0
+expected_directory=$(CDPATH= cd -- "$expected_directory" 2>/dev/null && pwd -P) || exit 0
+
+[ -r "$applescript_dir/find-focused-terminal.applescript" ] || exit 0
 [ -x "$timeout_runner" ] || exit 0
 
-marker="ghostx-surface:$$:$(date +%s)"
-printf '\033[22;0t\033]2;%s\007' "$marker" >"$tty_path" 2>/dev/null || exit 0
-restore_title() {
-  printf '\033[23;0t' >"$tty_path" 2>/dev/null || true
-}
-trap restore_title EXIT HUP INT TERM
-
-surface_id=""
-attempt=0
-while [ "$attempt" -lt 4 ]; do
-  surface_id=$(
-    "$timeout_runner" "$lookup_timeout" \
-      "$osascript_bin" "$applescript_dir/find-terminal-by-title.applescript" "$marker" 2>/dev/null
-  ) || surface_id=""
-  [ -n "$surface_id" ] && break
-  sleep 0.05
-  attempt=$((attempt + 1))
-done
+surface_id=$(
+  "$timeout_runner" "$lookup_timeout" \
+    "$osascript_bin" "$applescript_dir/find-focused-terminal.applescript" \
+    "$expected_directory" 2>/dev/null
+) || surface_id=""
 
 case "$surface_id" in
   ????????-????-????-????-????????????) printf '%s\n' "$surface_id" ;;

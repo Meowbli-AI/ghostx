@@ -18,214 +18,111 @@ assert_eq() {
   [ "$1" = "$2" ] || fail "expected '$1' to equal '$2'"
 }
 
-state_dir="$tmp_dir/state"
-tty_file="$tmp_dir/tty"
-mock_log="$tmp_dir/mock.log"
-: >"$tty_file"
-: >"$mock_log"
-
 session_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 surface_id="11111111-2222-3333-4444-555555555555"
+project_dir="$tmp_dir/project"
+mkdir -p "$project_dir"
+project_dir=$(CDPATH= cd -- "$project_dir" && pwd -P)
 
+# A completed command must not wait for the watchdog's full deadline.
+timeout_started=$(/bin/date +%s)
+"$repo_dir/libexec/run-with-timeout" 8 /usr/bin/true
+timeout_elapsed=$(( $(/bin/date +%s) - timeout_started ))
+[ "$timeout_elapsed" -lt 7 ] || fail "timeout helper waited after command completion"
+
+# Focused-terminal lookup is read-only and accepts only the caller's cwd.
 identified_surface=$(
   TERM_PROGRAM=ghostty \
   GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
   GHOSTX_OSASCRIPT="$repo_dir/tests/mock-osascript.sh" \
-  GHOSTX_TTY="$tty_file" \
-    "$repo_dir/libexec/identify-ghostty-surface"
+  GHOSTX_MOCK_FOCUSED_CWD="$project_dir" \
+  GHOSTX_MOCK_SURFACE_ID="$surface_id" \
+    "$repo_dir/libexec/identify-ghostty-surface" "$project_dir"
 )
 assert_eq "$identified_surface" "$surface_id"
 
-unbound_state_dir="$tmp_dir/unbound-state"
-printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"SessionStart\",\"cwd\":\"/tmp/project\"}" |
+mismatched_surface=$(
   TERM_PROGRAM=ghostty \
-  GHOSTX_SURFACE_ID= \
-  GHOSTX_STATE_DIR="$unbound_state_dir" \
-  "$repo_dir/libexec/bind-codex-session"
-[ ! -e "$unbound_state_dir/state.json" ] || fail "binding without a surface identity created state"
-
-# A Codex process that predates shell integration can still bind on its next
-# prompt by resolving the current Ghostty surface directly from its TTY.
-fallback_state_dir="$tmp_dir/fallback-state"
-printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
-  TERM_PROGRAM=ghostty \
-  GHOSTX_SURFACE_ID= \
-  GHOSTX_STATE_DIR="$fallback_state_dir" \
   GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
   GHOSTX_OSASCRIPT="$repo_dir/tests/mock-osascript.sh" \
-  GHOSTX_TTY="$tty_file" \
-  "$repo_dir/libexec/bind-codex-session"
-fallback_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$fallback_state_dir/state.json")
-assert_eq "$fallback_session" "$session_id"
+  GHOSTX_MOCK_FOCUSED_CWD="$tmp_dir/other" \
+  GHOSTX_MOCK_SURFACE_ID="$surface_id" \
+    "$repo_dir/libexec/identify-ghostty-surface" "$project_dir"
+)
+assert_eq "$mismatched_surface" ""
 
-# Hook subprocesses may not have their own controlling TTY. Walk up to the
-# Codex ancestor and pass its TTY explicitly to surface identification.
-ancestor_bin_dir="$tmp_dir/ancestor-bin"
-ancestor_state_dir="$tmp_dir/ancestor-state"
-ancestor_tty_log="$tmp_dir/ancestor-tty.log"
-mkdir -p "$ancestor_bin_dir"
-printf '%s\n' \
-  '#!/bin/sh' \
-  'case "$2:$4" in' \
-  "  tty=:4242) printf '%s\\n' ttys777 ;;" \
-  "  tty=:*) printf '%s\\n' '??' ;;" \
-  "  ppid=:*) printf '%s\\n' 4242 ;;" \
-  'esac' \
-  >"$ancestor_bin_dir/ps"
-printf '%s\n' \
-  '#!/bin/sh' \
-  "printf '%s\\n' \"\$GHOSTX_TTY\" >\"\$GHOSTX_TEST_TTY_LOG\"" \
-  "printf '%s\\n' '$surface_id'" \
-  >"$ancestor_bin_dir/identify"
-chmod 755 "$ancestor_bin_dir/ps" "$ancestor_bin_dir/identify"
-printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+if rg -n 'ghostx-surface:|22;0t|23;0t' \
+  "$repo_dir/libexec" "$repo_dir/shell" "$repo_dir/applescript" >/dev/null; then
+  fail "runtime still contains title mutation"
+fi
+
+# A prompt in the focused Ghostty terminal binds progressively without a TTY
+# probe or a shell restart.
+focused_state_dir="$tmp_dir/focused-state"
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"$project_dir\"}" |
   TERM_PROGRAM=ghostty \
   GHOSTX_SURFACE_ID= \
-  GHOSTX_TTY= \
-  GHOSTX_STATE_DIR="$ancestor_state_dir" \
-  GHOSTX_PS="$ancestor_bin_dir/ps" \
-  GHOSTX_IDENTIFY_SURFACE="$ancestor_bin_dir/identify" \
-  GHOSTX_TEST_TTY_LOG="$ancestor_tty_log" \
+  GHOSTX_STATE_DIR="$focused_state_dir" \
+  GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
+  GHOSTX_OSASCRIPT="$repo_dir/tests/mock-osascript.sh" \
+  GHOSTX_MOCK_FOCUSED_CWD="$project_dir" \
+  GHOSTX_MOCK_SURFACE_ID="$surface_id" \
   "$repo_dir/libexec/bind-codex-session"
-ancestor_tty=$(/usr/bin/sed -n '1p' "$ancestor_tty_log")
-assert_eq "$ancestor_tty" "/dev/ttys777"
-ancestor_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$ancestor_state_dir/state.json")
-assert_eq "$ancestor_session" "$session_id"
+focused_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$focused_state_dir/state.json")
+assert_eq "$focused_session" "$session_id"
 
-# A stalled transcript-owner lookup must fall back before Codex's outer hook
-# deadline instead of blocking the user prompt.
-printf '%s\n' \
-  '#!/bin/sh' \
-  'sleep 3' \
-  >"$ancestor_bin_dir/slow-lsof"
-chmod 755 "$ancestor_bin_dir/slow-lsof"
-bounded_state_dir="$tmp_dir/bounded-state"
-printf '%s\n' "{\"session_id\":\"$session_id\",\"transcript_path\":\"/tmp/stalled-rollout.jsonl\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+# A cwd mismatch is ambiguous, so it must remain an unbound successful no-op.
+mismatch_state_dir="$tmp_dir/mismatch-state"
+printf '%s\n' "{\"session_id\":\"ffffffff-1111-2222-3333-444444444444\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"$project_dir\"}" |
   TERM_PROGRAM=ghostty \
   GHOSTX_SURFACE_ID= \
-  GHOSTX_TTY= \
-  GHOSTX_STATE_DIR="$bounded_state_dir" \
-  GHOSTX_PS="$ancestor_bin_dir/ps" \
-  GHOSTX_LSOF="$ancestor_bin_dir/slow-lsof" \
-  GHOSTX_LSOF_TIMEOUT=1 \
-  GHOSTX_IDENTIFY_SURFACE="$ancestor_bin_dir/identify" \
-  GHOSTX_TEST_TTY_LOG="$ancestor_tty_log" \
+  GHOSTX_STATE_DIR="$mismatch_state_dir" \
+  GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
+  GHOSTX_OSASCRIPT="$repo_dir/tests/mock-osascript.sh" \
+  GHOSTX_MOCK_FOCUSED_CWD="$tmp_dir/other" \
+  GHOSTX_MOCK_SURFACE_ID="$surface_id" \
   "$repo_dir/libexec/bind-codex-session"
-bounded_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$bounded_state_dir/state.json")
-assert_eq "$bounded_session" "$session_id"
+[ ! -e "$mismatch_state_dir/state.json" ] || fail "cwd mismatch created state"
 
-# The complete binder has a stricter budget than Codex's outer 10-second hook
-# deadline. Expiration is a successful no-op so prompts never show hook errors.
-hard_cap_state_dir="$tmp_dir/hard-cap-state"
-hard_cap_started=$(/bin/date +%s)
-printf '%s\n' "{\"session_id\":\"$session_id\",\"transcript_path\":\"/tmp/stalled-rollout.jsonl\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+# Once a session has a unique saved mapping, later prompts reuse it without
+# another AppleScript lookup.
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"$project_dir\"}" |
   TERM_PROGRAM=ghostty \
   GHOSTX_SURFACE_ID= \
-  GHOSTX_TTY= \
-  GHOSTX_STATE_DIR="$hard_cap_state_dir" \
-  GHOSTX_PS="$ancestor_bin_dir/ps" \
-  GHOSTX_LSOF="$ancestor_bin_dir/slow-lsof" \
-  GHOSTX_LSOF_TIMEOUT=10 \
-  GHOSTX_BIND_TIMEOUT=1 \
-  GHOSTX_IDENTIFY_SURFACE="$ancestor_bin_dir/identify" \
-  GHOSTX_TEST_TTY_LOG="$ancestor_tty_log" \
+  GHOSTX_STATE_DIR="$focused_state_dir" \
+  GHOSTX_OSASCRIPT=/usr/bin/false \
   "$repo_dir/libexec/bind-codex-session"
-hard_cap_elapsed=$(( $(/bin/date +%s) - hard_cap_started ))
-[ "$hard_cap_elapsed" -lt 3 ] || fail "binder exceeded its total timeout"
-[ ! -e "$hard_cap_state_dir/state.json" ] || fail "timed-out binder wrote state"
+reused_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$focused_state_dir/state.json")
+assert_eq "$reused_session" "$session_id"
 
-# The transcript is a stronger link than process ancestry because Codex hook
-# runners do not have to remain descendants of the TUI process.
-transcript_bin_dir="$tmp_dir/transcript-bin"
-transcript_state_dir="$tmp_dir/transcript-state"
-transcript_tty_log="$tmp_dir/transcript-tty.log"
-transcript_path="$tmp_dir/rollout-$session_id.jsonl"
-mkdir -p "$transcript_bin_dir"
-: >"$transcript_path"
-printf '%s\n' \
-  '#!/bin/sh' \
-  "[ \"\$1\" = -t ] || exit 1" \
-  "[ \"\$2\" = -- ] || exit 1" \
-  "[ \"\$3\" = '$transcript_path' ] || exit 1" \
-  "printf '%s\\n' 32397" \
-  >"$transcript_bin_dir/lsof"
-printf '%s\n' \
-  '#!/bin/sh' \
-  'case "$2:$4" in' \
-  "  comm=:32397) printf '%s\\n' codex ;;" \
-  "  tty=:32397) printf '%s\\n' ttys006 ;;" \
-  "  *) exit 1 ;;" \
-  'esac' \
-  >"$transcript_bin_dir/ps"
-printf '%s\n' \
-  '#!/bin/sh' \
-  "printf '%s\\n' \"\$GHOSTX_TTY\" >\"\$GHOSTX_TEST_TTY_LOG\"" \
-  "printf '%s\\n' '$surface_id'" \
-  >"$transcript_bin_dir/identify"
-chmod 755 "$transcript_bin_dir/lsof" "$transcript_bin_dir/ps" "$transcript_bin_dir/identify"
-printf '%s\n' "{\"session_id\":\"$session_id\",\"transcript_path\":\"$transcript_path\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
-  TERM_PROGRAM=ghostty \
-  GHOSTX_SURFACE_ID= \
-  GHOSTX_TTY= \
-  GHOSTX_STATE_DIR="$transcript_state_dir" \
-  GHOSTX_PS="$transcript_bin_dir/ps" \
-  GHOSTX_LSOF="$transcript_bin_dir/lsof" \
-  GHOSTX_IDENTIFY_SURFACE="$transcript_bin_dir/identify" \
-  GHOSTX_TEST_TTY_LOG="$transcript_tty_log" \
-  "$repo_dir/libexec/bind-codex-session"
-transcript_tty=$(/usr/bin/sed -n '1p' "$transcript_tty_log")
-assert_eq "$transcript_tty" "/dev/ttys006"
-transcript_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$transcript_state_dir/state.json")
-assert_eq "$transcript_session" "$session_id"
-
-# Inherited Ghostx variables must never turn an IDE terminal into a Ghostty
-# restoration target.
+# Inherited variables must never bind an IDE terminal as a Ghostty surface.
 non_ghostty_state_dir="$tmp_dir/non-ghostty-state"
-printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"$project_dir\"}" |
   TERM_PROGRAM=vscode \
   GHOSTX_SURFACE_ID="$surface_id" \
   GHOSTX_STATE_DIR="$non_ghostty_state_dir" \
   "$repo_dir/libexec/bind-codex-session"
 [ ! -e "$non_ghostty_state_dir/state.json" ] || fail "non-Ghostty session created state"
 
-# Installation can backfill a Codex process that has not loaded the new hook.
-# The rollout filename supplies session identity without reading its contents.
-backfill_bin_dir="$tmp_dir/backfill-bin"
-backfill_state_dir="$tmp_dir/backfill-state"
-mkdir -p "$backfill_bin_dir"
-printf '%s\n' '#!/bin/sh' 'printf "%s\n" 4242' >"$backfill_bin_dir/pgrep"
-printf '%s\n' '#!/bin/sh' 'printf "%s\n" ttys777' >"$backfill_bin_dir/ps"
-printf '%s\n' '#!/bin/sh' "printf 'n/tmp/rollout-2026-07-27T00-00-00-$session_id.jsonl\\n'" >"$backfill_bin_dir/lsof"
-printf '%s\n' '#!/bin/sh' '[ "$GHOSTX_TTY" = /dev/ttys777 ] || exit 1' "printf '%s\\n' '$surface_id'" >"$backfill_bin_dir/identify"
-chmod 755 "$backfill_bin_dir"/*
-backfilled=$(
-  GHOSTX_STATE_DIR="$backfill_state_dir" \
-  GHOSTX_PGREP="$backfill_bin_dir/pgrep" \
-  GHOSTX_PS="$backfill_bin_dir/ps" \
-  GHOSTX_LSOF="$backfill_bin_dir/lsof" \
-  GHOSTX_IDENTIFY_SURFACE="$backfill_bin_dir/identify" \
-  GHOSTX_BIND_SESSION="$repo_dir/libexec/bind-codex-session" \
-    "$repo_dir/libexec/backfill-codex-sessions"
-)
-assert_eq "$backfilled" "1"
-backfilled_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$backfill_state_dir/state.json")
-assert_eq "$backfilled_session" "$session_id"
-
-# Later prompts from that old process reuse its unique saved mapping and do
-# not need another AppleScript round trip.
-printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+# The binder remains strictly below Codex's outer hook deadline.
+slow_identify="$tmp_dir/slow-identify"
+printf '%s\n' '#!/bin/sh' 'sleep 6' "printf '%s\\n' '$surface_id'" >"$slow_identify"
+chmod 755 "$slow_identify"
+hard_cap_state_dir="$tmp_dir/hard-cap-state"
+hard_cap_started=$(/bin/date +%s)
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"$project_dir\"}" |
   TERM_PROGRAM=ghostty \
   GHOSTX_SURFACE_ID= \
-  GHOSTX_STATE_DIR="$fallback_state_dir" \
-  GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
-  GHOSTX_OSASCRIPT=/usr/bin/false \
-  GHOSTX_TTY="$tty_file" \
+  GHOSTX_STATE_DIR="$hard_cap_state_dir" \
+  GHOSTX_BIND_TIMEOUT=1 \
+  GHOSTX_IDENTIFY_SURFACE="$slow_identify" \
   "$repo_dir/libexec/bind-codex-session"
-fallback_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$fallback_state_dir/state.json")
-assert_eq "$fallback_session" "$session_id"
+hard_cap_elapsed=$(( $(/bin/date +%s) - hard_cap_started ))
+[ "$hard_cap_elapsed" -lt 5 ] || fail "binder exceeded its total timeout"
+[ ! -e "$hard_cap_state_dir/state.json" ] || fail "timed-out binder wrote state"
 
-# A Ghostty process launched before the first binding must still be marked as
-# handled. Creating state later in that same process must not trigger replay.
+# A Ghostty process launched before the first binding is claimed so creating
+# state later cannot replay commands into already-running terminals.
 empty_state_dir="$tmp_dir/empty-state"
 empty_state_log="$tmp_dir/empty-state.log"
 : >"$empty_state_log"
@@ -238,14 +135,12 @@ GHOSTX_SKIP_WAIT=1 \
   "$repo_dir/libexec/restore-codex-sessions"
 [ -f "$empty_state_dir/run/restored-empty-state-instance" ] || fail "no-state startup was not guarded"
 
-printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"SessionStart\",\"cwd\":\"/tmp/project\"}" |
+state_dir="$tmp_dir/state"
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"SessionStart\",\"cwd\":\"$project_dir\"}" |
   TERM_PROGRAM=ghostty \
   GHOSTX_SURFACE_ID="$surface_id" \
   GHOSTX_STATE_DIR="$state_dir" \
   "$repo_dir/libexec/bind-codex-session"
-
-bound_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$state_dir/state.json")
-assert_eq "$bound_session" "$session_id"
 
 cp "$state_dir/state.json" "$empty_state_dir/state.json"
 GHOSTX_STATE_DIR="$empty_state_dir" \
@@ -257,6 +152,9 @@ GHOSTX_SKIP_WAIT=1 \
   "$repo_dir/libexec/restore-codex-sessions"
 assert_eq "$(wc -l <"$empty_state_log" | tr -d ' ')" "0"
 
+# Restoration exports the known surface ID before resuming the exact session.
+mock_log="$tmp_dir/mock.log"
+: >"$mock_log"
 GHOSTX_STATE_DIR="$state_dir" \
 GHOSTX_APPLESCRIPT_DIR="$repo_dir/applescript" \
 GHOSTX_OSASCRIPT="$repo_dir/tests/mock-osascript.sh" \
@@ -265,7 +163,7 @@ GHOSTX_INSTANCE_ID="test-instance" \
 GHOSTX_SKIP_WAIT=1 \
   "$repo_dir/libexec/restore-codex-sessions"
 
-expected="$surface_id\tcodex resume $session_id"
+expected="$surface_id\texport GHOSTX_SURFACE_ID='$surface_id'; codex resume '$session_id'"
 actual=$(cat "$mock_log")
 assert_eq "$actual" "$(printf '%b' "$expected")"
 
@@ -290,9 +188,12 @@ cp "$fake_home/Library/Application Support/com.mitchellh.ghostty/config" "$tmp_d
 cp "$fake_home/.zshrc" "$tmp_dir/original-zshrc"
 original_hooks_mode=$(stat -f '%Lp' "$fake_home/.codex/hooks.json")
 
-HOME="$fake_home" GHOSTX_SKIP_BACKFILL=1 "$repo_dir/install.sh" >/dev/null
+HOME="$fake_home" "$repo_dir/install.sh" >/dev/null
 grep -Fq 'existing-hook' "$fake_home/.codex/hooks.json" || fail "installer removed an existing hook"
 [ -x "$fake_home/.local/share/ghostx/runtime/libexec/run-with-timeout" ] || fail "installer omitted timeout helper"
+[ -f "$fake_home/.local/share/ghostx/runtime/applescript/find-focused-terminal.applescript" ] || fail "installer omitted focused-terminal helper"
+[ ! -e "$fake_home/.local/share/ghostx/runtime/applescript/find-terminal-by-title.applescript" ] || fail "installer retained title helper"
+[ ! -e "$fake_home/.local/share/ghostx/runtime/libexec/backfill-codex-sessions" ] || fail "installer retained unsafe backfill"
 hook_count=$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$fake_home/.codex/hooks.json")
 assert_eq "$hook_count" "2"
 hook_command=$(/usr/bin/plutil -extract hooks.SessionStart.1.hooks.0.command raw -o - "$fake_home/.codex/hooks.json")
@@ -312,7 +213,7 @@ grep -Fq '# existing zsh config' "$fake_home/.zshrc" || fail "installer removed 
 # Reinstalling must not duplicate marked blocks or hooks.
 /usr/bin/plutil -replace hooks.SessionStart.1.hooks.0.timeout -integer 3 "$fake_home/.codex/hooks.json"
 /usr/bin/plutil -replace hooks.UserPromptSubmit.0.hooks.0.timeout -integer 3 "$fake_home/.codex/hooks.json"
-HOME="$fake_home" GHOSTX_SKIP_BACKFILL=1 "$repo_dir/install.sh" >/dev/null
+HOME="$fake_home" "$repo_dir/install.sh" >/dev/null
 assert_eq "$(grep -Fc '# >>> ghostx >>>' "$fake_home/.zshrc")" "1"
 assert_eq "$(grep -Fc '# >>> ghostx >>>' "$fake_home/Library/Application Support/com.mitchellh.ghostty/config")" "1"
 assert_eq "$(/usr/bin/plutil -extract hooks.SessionStart raw -o - "$fake_home/.codex/hooks.json")" "2"

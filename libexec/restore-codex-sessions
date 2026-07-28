@@ -104,9 +104,10 @@ for surface_id in $surface_ids; do
     *) continue ;;
   esac
 
+  resume_command="export GHOSTX_SURFACE_ID='$surface_id'; codex resume '$session_id'"
   result=$(
     "$osascript_bin" "$applescript_dir/restore-surface.applescript" \
-      "$surface_id" "codex resume $session_id" 2>/dev/null
+      "$surface_id" "$resume_command" 2>/dev/null
   ) || result=""
   [ "$result" = "restored" ] && restored=$((restored + 1))
 done

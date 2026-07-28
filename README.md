@@ -13,8 +13,8 @@ mechanisms:
 - zsh starts a one-shot restore helper when a restored Ghostty process opens
   its shells.
 
-The result is deterministic even when many Codex sessions share the same
-working directory.
+After a session has been bound once, restoration is deterministic even when
+many Codex sessions share the same working directory.
 
 ```text
 Ghostty surface UUID <-> Codex session UUID
@@ -54,39 +54,48 @@ The installer is idempotent and preserves existing configuration. It:
 1. Copies the runtime integration to
    `${XDG_DATA_HOME:-~/.local/share}/ghostx/runtime`.
 2. Appends a marked `window-save-state = always` block to the Ghostty config.
-3. Appends one `SessionStart` group to `~/.codex/hooks.json` without replacing
-   existing hooks.
+3. Appends Ghostx `SessionStart` and `UserPromptSubmit` groups to
+   `~/.codex/hooks.json` without replacing existing hooks.
 4. Adds one marked source block to `~/.zshrc`.
-5. Backfills already-running Codex TUI processes by matching each process's
-   open rollout filename and controlling TTY to its Ghostty surface.
+5. Removes obsolete title-probe helpers from earlier Ghostx installations.
 
-The surface identity is normally exported during interactive shell startup.
 After the first install, open `/hooks` once and trust the Ghostx hooks if they
 are pending review. New and resumed Codex sessions bind at `SessionStart`.
-Sessions that were already running are backfilled during installation. The
-installer reads only the rollout filename already opened by each Codex process,
-not transcript contents, and matches its controlling TTY to the Ghostty
-surface. The prompt hook remains a progressive fallback; if a Codex process
-predates the shell integration, it resolves the current Ghostty surface directly
-from that TTY. No `exec zsh`, new chat, or resume cycle is required.
+Sessions that were already running bind progressively on their next prompt.
+No `exec zsh`, new chat, or resume cycle is required.
+
+Binding is deliberately best-effort. If Ghostty is not focused, its working
+directory does not match, or AppleScript is temporarily unavailable, the hook
+exits successfully and retries on the next prompt. It has a shorter internal
+deadline than Codex's hook timeout, so a failed save must not block a prompt.
 
 On the next Ghostty relaunch, restored surfaces automatically receive their
 exact `codex resume <UUID>` command.
 
-A Mac reboot is not required for an end-to-end check. After at least one
-session has been bound, fully quit Ghostty and reopen it; this exercises the
-same application-state restoration path. Save active terminal work first,
-because quitting Ghostty terminates the processes running in its surfaces.
+A Mac reboot is not required for an end-to-end check. After the desired
+sessions have each received at least one prompt, save active terminal work,
+fully quit Ghostty, and reopen it. Quitting Ghostty terminates the processes in
+its surfaces.
+
+Closing every window is not the same as quitting the application. For a strict
+test, record the process ID before quitting:
+
+```sh
+pgrep -x ghostty
+```
+
+After Quit, the command should return no process. Reopening Ghostty should
+produce a new process ID. Ghostx performs restoration once for that new Ghostty
+process.
 
 ## How binding works
 
-At interactive shell startup, the zsh integration temporarily sets a unique
-terminal title through `/dev/tty`, resolves that title to Ghostty's stable
-terminal UUID through AppleScript, immediately restores the previous title,
-and exports the UUID as `GHOSTX_SURFACE_ID`. The Codex hooks receive
-`session_id` on stdin and combine it with that exported surface identity. If an
-older Codex process does not have the environment variable, the hook performs
-the same TTY lookup itself. The mapping is stored at:
+On a normal start or prompt, the Codex hook asks Ghostty for its focused
+terminal and accepts it only when Ghostty's reported working directory matches
+the hook's current working directory. It never changes the terminal title.
+During restoration, Ghostx injects the known surface UUID into the exact
+`codex resume` command, so restored sessions do not depend on focus. The
+mapping is stored at:
 
 ```text
 ${XDG_STATE_HOME:-~/.local/state}/ghostx/state.json
@@ -94,9 +103,16 @@ ${XDG_STATE_HOME:-~/.local/state}/ghostx/state.json
 
 The restore helper runs once per Ghostty application process. It waits for the
 restored surface list to settle, then targets only surface UUIDs that exist in
-both the live Ghostty application and the state file.
+both the live Ghostty application and the state file. Ghostx does not recreate
+a surface that Ghostty itself did not restore, because the same missing surface
+can also mean that the user intentionally closed it.
 
 macOS asks for Automation permission the first time the hook controls Ghostty.
+
+Ghostx versions before the focused-terminal implementation briefly used
+terminal-title probes. Upgrading removes those helpers and prevents further
+title changes. A title already left behind by an older version may remain until
+the shell or terminal resets it; Ghostx cannot reconstruct the previous title.
 
 ## Uninstall
 
