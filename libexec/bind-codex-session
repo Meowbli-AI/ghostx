@@ -8,11 +8,25 @@ set -u
 umask 077
 
 runtime_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd) || exit 0
+timeout_runner=${GHOSTX_TIMEOUT_RUNNER:-"$runtime_dir/libexec/run-with-timeout"}
+
+# Codex gives command hooks 10 seconds by default. Keep a stricter total budget
+# here and treat expiration as a skipped progressive save, never as a failed
+# user prompt.
+case ${GHOSTX_BIND_INNER:-} in
+  1) ;;
+  *)
+    [ -x "$timeout_runner" ] || exit 0
+    bind_timeout=${GHOSTX_BIND_TIMEOUT:-5}
+    GHOSTX_BIND_INNER=1 "$timeout_runner" "$bind_timeout" "$0" || true
+    exit 0
+    ;;
+esac
+
 state_dir=${GHOSTX_STATE_DIR:-"${XDG_STATE_HOME:-$HOME/.local/state}/ghostx"}
 state_file="$state_dir/state.json"
 ps_bin=${GHOSTX_PS:-/bin/ps}
 lsof_bin=${GHOSTX_LSOF:-/usr/sbin/lsof}
-timeout_runner=${GHOSTX_TIMEOUT_RUNNER:-"$runtime_dir/libexec/run-with-timeout"}
 
 resolve_pid_tty() {
   target_pid=$1

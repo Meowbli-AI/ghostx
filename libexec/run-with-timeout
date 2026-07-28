@@ -21,7 +21,10 @@ cleanup() {
 }
 trap 'cleanup; exit 130' HUP INT TERM
 
-"$@" &
+# POSIX shells may attach /dev/null to asynchronous commands unless stdin is
+# redirected explicitly. Preserve hook payloads for wrapped commands.
+exec 3<&0
+"$@" <&3 &
 command_pid=$!
 
 (

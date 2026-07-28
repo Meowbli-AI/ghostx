@@ -114,6 +114,26 @@ printf '%s\n' "{\"session_id\":\"$session_id\",\"transcript_path\":\"/tmp/stalle
 bounded_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$bounded_state_dir/state.json")
 assert_eq "$bounded_session" "$session_id"
 
+# The complete binder has a stricter budget than Codex's outer 10-second hook
+# deadline. Expiration is a successful no-op so prompts never show hook errors.
+hard_cap_state_dir="$tmp_dir/hard-cap-state"
+hard_cap_started=$(/bin/date +%s)
+printf '%s\n' "{\"session_id\":\"$session_id\",\"transcript_path\":\"/tmp/stalled-rollout.jsonl\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"/tmp/project\"}" |
+  TERM_PROGRAM=ghostty \
+  GHOSTX_SURFACE_ID= \
+  GHOSTX_TTY= \
+  GHOSTX_STATE_DIR="$hard_cap_state_dir" \
+  GHOSTX_PS="$ancestor_bin_dir/ps" \
+  GHOSTX_LSOF="$ancestor_bin_dir/slow-lsof" \
+  GHOSTX_LSOF_TIMEOUT=10 \
+  GHOSTX_BIND_TIMEOUT=1 \
+  GHOSTX_IDENTIFY_SURFACE="$ancestor_bin_dir/identify" \
+  GHOSTX_TEST_TTY_LOG="$ancestor_tty_log" \
+  "$repo_dir/libexec/bind-codex-session"
+hard_cap_elapsed=$(( $(/bin/date +%s) - hard_cap_started ))
+[ "$hard_cap_elapsed" -lt 3 ] || fail "binder exceeded its total timeout"
+[ ! -e "$hard_cap_state_dir/state.json" ] || fail "timed-out binder wrote state"
+
 # The transcript is a stronger link than process ancestry because Codex hook
 # runners do not have to remain descendants of the TUI process.
 transcript_bin_dir="$tmp_dir/transcript-bin"
