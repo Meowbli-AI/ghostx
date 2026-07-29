@@ -71,6 +71,31 @@ printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptS
 focused_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$focused_state_dir/state.json")
 assert_eq "$focused_session" "$session_id"
 
+# A watchdog termination must not leave progressive saves blocked forever.
+# Reclaim only an old, empty lock; a fresh lock still represents a writer.
+stale_lock_state_dir="$tmp_dir/stale-lock-state"
+mkdir -p "$stale_lock_state_dir/.bind-lock"
+/usr/bin/touch -t 202001010000 "$stale_lock_state_dir/.bind-lock"
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"$project_dir\"}" |
+  TERM_PROGRAM=ghostty \
+  GHOSTX_SURFACE_ID="$surface_id" \
+  GHOSTX_STATE_DIR="$stale_lock_state_dir" \
+  "$repo_dir/libexec/bind-codex-session"
+stale_lock_session=$(/usr/bin/plutil -extract "surfaces.$surface_id.session_id" raw -o - "$stale_lock_state_dir/state.json")
+assert_eq "$stale_lock_session" "$session_id"
+[ ! -e "$stale_lock_state_dir/.bind-lock" ] || fail "stale binder lock survived recovery"
+
+fresh_lock_state_dir="$tmp_dir/fresh-lock-state"
+mkdir -p "$fresh_lock_state_dir/.bind-lock"
+printf '%s\n' "{\"session_id\":\"$session_id\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"$project_dir\"}" |
+  TERM_PROGRAM=ghostty \
+  GHOSTX_SURFACE_ID="$surface_id" \
+  GHOSTX_STATE_DIR="$fresh_lock_state_dir" \
+  GHOSTX_BIND_TIMEOUT=1 \
+  "$repo_dir/libexec/bind-codex-session"
+[ ! -e "$fresh_lock_state_dir/state.json" ] || fail "fresh binder lock was reclaimed"
+[ -d "$fresh_lock_state_dir/.bind-lock" ] || fail "fresh binder lock was removed"
+
 # A cwd mismatch is ambiguous, so it must remain an unbound successful no-op.
 mismatch_state_dir="$tmp_dir/mismatch-state"
 printf '%s\n' "{\"session_id\":\"ffffffff-1111-2222-3333-444444444444\",\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"$project_dir\"}" |

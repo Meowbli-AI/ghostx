@@ -68,6 +68,8 @@ Binding is deliberately best-effort. If Ghostty is not focused, its working
 directory does not match, or AppleScript is temporarily unavailable, the hook
 exits successfully and retries on the next prompt. It has a shorter internal
 deadline than Codex's hook timeout, so a failed save must not block a prompt.
+If that deadline interrupts a write after its lock is created, later hooks
+automatically reclaim the stale lock and resume progressive saves.
 
 On the next Ghostty relaunch, restored surfaces automatically receive their
 exact `codex resume <UUID>` command. Ghostx disables Codex's startup update

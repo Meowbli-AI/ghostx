@@ -83,8 +83,27 @@ esac
 
 mkdir -p "$state_dir" || exit 0
 lock_dir="$state_dir/.bind-lock"
+bind_timeout=${GHOSTX_BIND_TIMEOUT:-5}
+case "$bind_timeout" in
+  ''|*[!0-9]*|0) bind_timeout=5 ;;
+esac
+lock_stale_after=$((bind_timeout * 2))
 attempt=0
 while ! mkdir "$lock_dir" 2>/dev/null; do
+  # The watchdog can terminate a binder after it creates the directory but
+  # before its EXIT trap runs. An empty lock older than twice the configured
+  # deadline cannot still belong to a healthy writer.
+  lock_modified=$(/usr/bin/stat -f '%m' "$lock_dir" 2>/dev/null) || lock_modified=""
+  lock_checked_at=$(date +%s)
+  case "$lock_modified" in
+    ''|*[!0-9]*) ;;
+    *)
+      lock_age=$((lock_checked_at - lock_modified))
+      if [ "$lock_age" -ge "$lock_stale_after" ] && rmdir "$lock_dir" 2>/dev/null; then
+        continue
+      fi
+      ;;
+  esac
   attempt=$((attempt + 1))
   [ "$attempt" -lt 40 ] || exit 0
   sleep 0.05
