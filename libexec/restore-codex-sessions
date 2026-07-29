@@ -104,7 +104,10 @@ for surface_id in $surface_ids; do
     *) continue ;;
   esac
 
-  resume_command="export GHOSTX_SURFACE_ID='$surface_id'; codex resume '$session_id'"
+  # An interactive update prompt exits before Codex processes the resume
+  # request. Suppress that prompt only for automatic restoration; ordinary
+  # Codex launches still check for updates normally.
+  resume_command="export GHOSTX_SURFACE_ID='$surface_id'; codex -c check_for_update_on_startup=false resume '$session_id'"
   result=$(
     "$osascript_bin" "$applescript_dir/restore-surface.applescript" \
       "$surface_id" "$resume_command" 2>/dev/null

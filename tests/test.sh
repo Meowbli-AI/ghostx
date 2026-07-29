@@ -163,7 +163,7 @@ GHOSTX_INSTANCE_ID="test-instance" \
 GHOSTX_SKIP_WAIT=1 \
   "$repo_dir/libexec/restore-codex-sessions"
 
-expected="$surface_id\texport GHOSTX_SURFACE_ID='$surface_id'; codex resume '$session_id'"
+expected="$surface_id\texport GHOSTX_SURFACE_ID='$surface_id'; codex -c check_for_update_on_startup=false resume '$session_id'"
 actual=$(cat "$mock_log")
 assert_eq "$actual" "$(printf '%b' "$expected")"
 

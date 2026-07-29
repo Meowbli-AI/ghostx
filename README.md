@@ -70,7 +70,11 @@ exits successfully and retries on the next prompt. It has a shorter internal
 deadline than Codex's hook timeout, so a failed save must not block a prompt.
 
 On the next Ghostty relaunch, restored surfaces automatically receive their
-exact `codex resume <UUID>` command.
+exact `codex resume <UUID>` command. Ghostx disables Codex's startup update
+check for these automatic resume commands only. Otherwise, choosing **Update
+now** exits before Codex processes the session UUID and leaves the terminal at
+the shell prompt. Normal manual Codex launches still check for updates, and
+`codex update` remains available at any time.
 
 A Mac reboot is not required for an end-to-end check. After the desired
 sessions have each received at least one prompt, save active terminal work,
